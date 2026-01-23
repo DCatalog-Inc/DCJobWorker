@@ -1,0 +1,34 @@
+﻿{
+  "product": "itext-core",
+  "licensee": {
+    "company": "DCatalog, Inc.",
+    "name": "Michael Raviv",
+    "email": "miki@dcatalog.com"
+  },
+  "key": "5757a9f124ecd80f2ee3814ad0158f3471dd8f2435c3bf17adbc23f5eabc139b",
+  "creationDate": "2024-10-04",
+  "expirationDate": "2026-01-17",
+  "onExpiration": "fail",
+  "platform": "dotnet",
+  "licenseType": "production",
+  "deploymentType": "instance",
+  "limits": {
+    "default": {
+      "limitType": "volume",
+      "initialLimit": 30000,
+      "sendEvents": true,
+      "unavailabilityStrategy": "grace",
+      "gracePeriod": "0d2h0m",
+      "checkLimits": true,
+      "exceededStrategy": "log"
+    }
+  },
+  "eventReporting": {
+    "reportingType": [
+      "remote"
+    ]
+  },
+  "licenseVersion": "1.0.0",
+  "sendStatistics": "disabled",
+  "signature": "f/JFtK+YYtLFwU6yJ889kGQkWmjsNK9XfrMUoxKbIRPuoGW7PBWaCUKmY0SEUF57dW94a7OSJD3XOHbeVPEkilAZYPnk/g0aLcnIb4cmBAA2HgSs0CwhHyGbLkAMXZg4LVVhk82POs04+rb/HykecAjHQrew/lxpWFi/+/Mo7moBCgkgu1D5mWujcZFO1sIV4yn206HMDTLdgkVDG+4vdJa1q1CE8oJB0D+Ot9Wil/5ntWE607NzqKq2RvHNcV/n/l2J10Fj2K485/uR2T/Fql3xK8CRC/djDG9Y7KFPpSa+dmtRIsI9JS8YC0u0XGBPa65Gjfhii7uBQi3OemAtHF5/VaOb+KHW+ff8OJVgHbDbxetLSwjpq3TrnoPbHys44jOoXChJvtQBjH9AJOFnEDw8ZHBh2lLjrvYulzsIsyuqbM6MyTmr9/2jQdzMahdhNWMvQXMGdc8dPRr2d+gR+nlCST4OYVHnzxNO1xpgSqJqlvSmRmMjPily56AHbKAFReskut6196fjSYNB5SgCyW1URMrIEGXvlFv1U+zlx6MVCpQe8/JJAUCgbMNqBBTDziC5EQlYDvO2ikrycfA9ceYbNyuS3bW3Uc+E6zSAtlMDEI/cqlj9RN66EaEcqXbMULkDf+A+VQXqIiZJbLxD9cn1T+HyzSszEYzjzaXbYao="
+}
