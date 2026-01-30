@@ -554,14 +554,13 @@ namespace JobWorker.Jobs
 
                     var oRecognizelinksinput = await context.recognizelinksinput
                                       .Include(c => c.Job)
+                                      .Include(c=>c.Expresions)
                                       .Where(c => c.Job.Id == oJob.Id)
                                       .FirstOrDefaultAsync();
                     if (oRecognizelinksinput != null)
                     {
-                        JobExecutionImportNotes oJobExecutionImportNotes = new JobExecutionImportNotes(context);
-                        oImportNotesInput.OutputDirectory = sOutputDirectory;
-                        oImportNotesInput.InputFileName = sPDFFile;
-                        oJobExecutionImportNotes.importNotes(oImportNotesInput);
+                        JobExecutionRecognizeLinks oJobExecutionRecognizeLinks = new JobExecutionRecognizeLinks(context);
+                        oJobExecutionRecognizeLinks.recognizeLinksFromLocal(oRecognizelinksinput);
                     }
 
                     if (oDocument.NumberOfPages > 200 && (oDocument.Publication.Publisher.Licenses[0].LicenseType == Constants.ProductType.Trial.ToString() || oDocument.Publication.Publisher.Licenses[0].LicenseType == Constants.ProductType.Select.ToString()))
@@ -580,6 +579,21 @@ namespace JobWorker.Jobs
                     {
                         SearchProductsInDocument(context,oDocument);
                     }
+
+                    var oSaveLinksTopdfInput = await context.savelinkstopdfinput
+                                     .Include(c => c.Job)
+                                     .Where(c => c.Job.Id == oJob.Id)
+                                     .FirstOrDefaultAsync();
+
+                    if(oSaveLinksTopdfInput != null)
+                    {
+                        string sPDFWithLinksFileName = oDocument.PDFFileName.Replace(".pdf", "_Links.pdf");
+                        string sFullPDFFileName = Path.Combine(sOutputDirectory, oDocument.PDFFileName);
+                        string sFullTempFileName = Path.Combine(sOutputDirectory, sPDFWithLinksFileName);
+                        bool bSaveLinks = JobExecutionSaveLinksToPDF.saveLinksToPDF(oDocument, sFullTempFileName);
+
+                    }
+
 
 
 
@@ -660,8 +674,7 @@ namespace JobWorker.Jobs
 
                     context.SaveChanges();
 
-                    // Your real processing logic here
-                    await Task.Delay(500, ct);
+                 
 
 
                 }
