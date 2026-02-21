@@ -16,6 +16,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
 using System.Net;
+using System.Security.AccessControl;
 using System.Text;
 using System.Threading.Tasks;
 using static DCJobs.ImnaseProductsExport;
@@ -62,6 +63,21 @@ namespace JobWorker.Jobs
 
 
             return true;
+        }
+
+
+
+        string NormalizeUrl(string raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw)) return null;
+
+            raw = raw.Trim();
+
+            // If it's like "LMCTRUCK.com" or "www.foo.com", add scheme
+            if (!raw.Contains("://"))
+                raw = "https://" + raw;
+
+            return raw;
         }
 
         public async Task<bool> downloadJsonPagesAsync(document doc, savelinkstocsvinput savelinkstocsv, job oJob)
@@ -121,20 +137,24 @@ namespace JobWorker.Jobs
                     string sProductName = "";
                     if (!string.IsNullOrEmpty(slinkurl))
                     {
-                        var uri = new Uri(slinkurl);
+                        var normalized = NormalizeUrl(slinkurl);
+                        var uri = new Uri(normalized);
                         var query = System.Web.HttpUtility.ParseQueryString(uri.Query);
                         sProductName = query["sku"];   // e.g. "38-7505"
                     }
 
+                    string sPageNumber = i.ToString();
                     // Fallback if sku not found (just in case)
                     if (string.IsNullOrEmpty(sProductName))
                     {
-                        sProductName = slinkurl.LastIndexOf("/") >= 0
-                            ? slinkurl.Substring(slinkurl.LastIndexOf("/") + 1)
-                            : slinkurl;
+                        records.Add(new ImnaseCSVHeader { SKU = slinkurl, PageNumber = sPageNumber, URL = slinkurl });
                     }
-                    string sPageNumber = i.ToString();
-                    records.Add(new ImnaseCSVHeader { SKU = sProductName, PageNumber = sPageNumber, URL = slinkurl });
+                    else
+                    {
+                        records.Add(new ImnaseCSVHeader { SKU = sProductName, PageNumber = sPageNumber, URL = slinkurl });
+                    }
+                   
+                   
 
                 }
             }
