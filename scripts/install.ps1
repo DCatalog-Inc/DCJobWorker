@@ -1,7 +1,8 @@
 $svc = "JobWorker"
 
 $exe  = "C:\DCatalog\JobWorker\JobWorker.exe"
-$nssm = "C:\DCatalog\JobWorker\Tools\nssm\nssm.exe"
+$nssm = "C:\DCatalog\nssm\nssm.exe"
+
 
 # If service already exists, remove it cleanly
 if (Get-Service -Name $svc -ErrorAction SilentlyContinue) {

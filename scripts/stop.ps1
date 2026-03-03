@@ -1,2 +1,2 @@
-$nssm = "C:\DCatalog\JobWorker\Tools\nssm\nssm.exe"
+$nssm = "C:\DCatalog\nssm\nssm.exe"
 & $nssm stop JobWorker

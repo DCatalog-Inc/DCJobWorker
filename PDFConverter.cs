@@ -1,44 +1,26 @@
 ﻿#pragma warning disable CA1416
-using Amazon.Util.Internal;
+using core.Common;
+using core.Models;
+using core.Models.Convertor;
 using Core;
 using Core.Models;
-using DCatalogCommon;
 using DCatalogCommon.Data;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Collections;
-using Microsoft.Extensions.Logging;
-using System.Xml;
-using Newtonsoft.Json.Linq;
+using iText.Forms;
+using iText.Kernel.Pdf;
+using Microsoft.EntityFrameworkCore;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
+using System.Collections;
 using System.Diagnostics;
+using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
-using System.Drawing;
-using System.Net;
-using Nest;
-using MySqlX.XDevAPI;
-using iText.Kernel.Pdf;
-using iText.Kernel.Geom;
-using System.IO;
-using iText.Kernel.Utils;
-using iText.Forms;
-using Elasticsearch.Net;
-using Microsoft.EntityFrameworkCore.Metadata.Internal;
-using core.Models.Convertor;
-using Image = core.Models.Convertor.Image;
-using Hangfire.Logging;
-using Microsoft.AspNetCore.Http;
-using Microsoft.EntityFrameworkCore;
-using core.Common;
-using static QRCoder.PayloadGenerator;
-using core.Models;
-using System.Text.Json;
 using System.Globalization;
-using Org.BouncyCastle.Asn1.Ocsp;
+using System.Text;
+using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Xml;
+using Image = core.Models.Convertor.Image;
 using JsonSerializer = System.Text.Json.JsonSerializer;
 
 namespace JobWorker
@@ -315,17 +297,19 @@ namespace JobWorker
             // Fonts
             var fontNodes = docXml.SelectNodes("//font");
             var fontsSb = new StringBuilder();
+
             for (int i = 0; i < (fontNodes?.Count ?? 0); i++)
             {
-                if (i > 0) fontsSb.Append(',');
-                var fname = Attr(fontNodes![i], "name");
-                // Your template expects {"@attributes": $font} where $font is just the name serialized (a JSON string)
-                fontsSb.Append("{\"@attributes\":");
-                fontsSb.Append(J(fname));
-                fontsSb.Append('}');
+                if (i > 0)
+                    fontsSb.Append(",");
+
+                var fname = Attr(fontNodes[i], "name");
+
+                fontsSb.Append("{\"@attributes\":{\"name\":\"");
+                fontsSb.Append(fname);
+                fontsSb.Append("\"}}");
             }
             docJson = docJson.Replace("$fonts", fontsSb.ToString());
-
             return docJson;
         }
 
@@ -2076,13 +2060,36 @@ namespace JobWorker
                 createPageXML(sOutputDirectory, j + 1, arrPagesID[j].ToString());
             }
 
+
             // c=1 recognize links.
             String command = string.Format("-i \"{0}\" -o \"{1}\" -e 0 -c 1 -d \"{2}\"", sPDFFile, sOutputDir, oCreatePagesXMLInput.Document.Id.ToString());
-            string exePath = System.IO.Path.Combine(AppContext.BaseDirectory, "Tools", "PDFUtils", "PDFUtils.exe");
-            ProcessStartInfo cmdsi = new ProcessStartInfo("PDFUtils.exe");
-            cmdsi.Arguments = command;
-            Process cmd = Process.Start(cmdsi);
-            cmd.WaitForExit();
+            var exePath = System.IO.Path.Combine(AppContext.BaseDirectory, "Tools", "PDFUtils", "PDFUtils.exe");
+            var exeDir = System.IO.Path.GetDirectoryName(exePath);
+
+            var psi = new ProcessStartInfo
+            {
+                FileName = exePath,                 // USE FULL PATH
+                Arguments = command,
+                WorkingDirectory = exeDir,          // IMPORTANT
+                UseShellExecute = false,            // required to redirect output
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            };
+
+            using var p = Process.Start(psi);
+
+            string stdout = p.StandardOutput.ReadToEnd();
+            string stderr = p.StandardError.ReadToEnd();
+            p.WaitForExit();
+
+            // Log these somewhere you can see them:
+            File.AppendAllText(@"C:\DCatalog\JobWorker\logs\pdfutils_out.log", stdout);
+            File.AppendAllText(@"C:\DCatalog\JobWorker\logs\pdfutils_err.log", stderr);
+
+            if (p.ExitCode != 0)
+                throw new Exception($"PDFUtils failed (ExitCode={p.ExitCode}). STDERR: {stderr}");
+         
             return true;
         }
 

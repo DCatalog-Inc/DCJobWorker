@@ -4,10 +4,19 @@ using DCatalogCommon.Data;
 using JobWorker.Jobs;
 using Microsoft.EntityFrameworkCore;
 using iText.Licensing.Base;
+using Serilog;
 
+
+Log.Logger = new LoggerConfiguration()
+    .MinimumLevel.Information()
+    .WriteTo.Console()
+    .WriteTo.File("logs/jobworker-.log",
+        rollingInterval: RollingInterval.Day)
+    .CreateLogger();
 //
 // 1. Fetch secrets first (async before Host is built)
 //
+Log.Information("Starting JobWorker...");
 SecretsManagerService.Initialize("us-east-1");
 var secrets = SecretsManagerService.Instance;
 

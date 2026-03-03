@@ -21,6 +21,7 @@ using Renci.SshNet;
 using Core.Services;
 using Force.Crc32;
 using core.Common;
+using Serilog;
 
 namespace JobWorker.Jobs
 {
@@ -113,6 +114,7 @@ namespace JobWorker.Jobs
             }
             catch (Exception e)
             {
+                Log.Error(e.Message);
                 bDocumentContainText = false;
                 return false;
             }
@@ -311,6 +313,8 @@ namespace JobWorker.Jobs
                 oDocument.HiPageResolution = oDocument.Publication.ImageResolution;
                 oDocument.DocumentProcessingDescription = oCreateDocumentXMLInput.Description;
                 oDocument.DocumentProgressingPercent = 10;
+                context.Update(oDocument);
+                context.SaveChanges();
                 if (File.Exists(sPDFFile))
                     File.Delete(sPDFFile);
                 sPDFFile = oCreateDocumentXMLInput.InputFileName;
@@ -405,20 +409,10 @@ namespace JobWorker.Jobs
                     oDocument.DocumentProcessingDescription = oCreateImagesInput.Description;
                     oDocument.DocumentProgressingPercent = 25;
                     oCreateImagesInput.OutputDirectory = sOutputDirectory;
-                    if (bUseMuTools)
-                        res = oDocumentConvertor.createImagesEx(oCreateImagesInput, oDocument.NumberOfPages);
-                    else
-                    {
-                        /*
-                        res = oDocumentConvertor.createImages(oCreateImagesInput);
-                        if (!res)
-                        {
-                            bUseMuTools = true;
-                            oDocumentConvertor.createImagesEx(oCreateImagesInput);
-                        }
-                        */
-                    }
+                    res = oDocumentConvertor.createImagesEx(oCreateImagesInput, oDocument.NumberOfPages);
                 }
+                context.Update(oDocument);
+                context.SaveChanges();
 
                 var oCreatePagesXMLInput = await context.createpagesxmlinput
                                     .Include(c => c.Job)
@@ -431,6 +425,8 @@ namespace JobWorker.Jobs
                     oCreatePagesXMLInput.InputFileName = sPDFFile; // Temperary fix
                     oDocumentConvertor.createPagesXML(sPDFFile, oCreatePagesXMLInput, sOutputDirectory, oDocument.NumberOfPages);
                 }
+                context.Update(oDocument);
+                context.SaveChanges();
 
 
                 var oPDF2HTMLInput = await context.pdf2htmlinput
@@ -441,6 +437,9 @@ namespace JobWorker.Jobs
                 {
                     oDocument.DocumentProcessingDescription = oPDF2HTMLInput.Description;
                     oDocument.DocumentProgressingPercent = 60;
+
+                    context.Update(oDocument);
+                    context.SaveChanges();
                     //This step also import links from the PDF.
 
                     bool bTextExtractor = context.serversettings.FirstOrDefault(x => x.Name == "TextExtractor").Value != "0";
