@@ -2,6 +2,7 @@
 using core;
 using Core;
 using Core.Models;
+using core.Models;
 using DCatalogCommon.Data;
 using Microsoft.EntityFrameworkCore;
 using MySqlX.XDevAPI;
@@ -517,9 +518,24 @@ namespace JobWorker.Jobs
                     bool bEnableAI = (oDocument.Publication.Publisher.ExtraOptions & Convert.ToInt32(Constants.PublisherExtraOptions.EnableAI)) != 0;
                     if (bDocumentContainText && bEnableAI)
                     {
-                        AIEmbeddingService oAIEmbeddingService = new AIEmbeddingService();
-                        await oAIEmbeddingService.DeleteEmbeddingForDocumentAsync(context, oDocument.Id,ct);
-                        await oAIEmbeddingService.addDocumentToAIAsync(context, oDocument,ct);
+                        string sAIJobTypeName = Constants.EJobType.JobAddToAILibrary.ToString();
+                        jobtype oAIJobType = context.jobtype.FirstOrDefault(x => x.Name == sAIJobTypeName);
+                        if (oAIJobType == null) { oAIJobType = new jobtype(); oAIJobType.Name = sAIJobTypeName; }
+                        job oAIJob = new job(oAIJobType);
+                        context.job.Add(oAIJob);
+                        await context.SaveChangesAsync(ct);
+
+                        addaiinput oAddAiInput = new addaiinput();
+                        oAddAiInput.Job = oAIJob;
+                        oAddAiInput.Document = oDocument;
+                        oAddAiInput.AddType = 0;
+                        context.addaiinput.Add(oAddAiInput);
+                        await context.SaveChangesAsync(ct);
+
+                        var aiJobLogger = _log as ILogger<AddToAILibraryJob>
+                            ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<AddToAILibraryJob>.Instance;
+                        var dcAIJob = new AddToAILibraryJob(context, aiJobLogger);
+                        await dcAIJob.ExecuteAsync(oAIJob.Id, oDocument.Id, 0);
                     }
 
 
