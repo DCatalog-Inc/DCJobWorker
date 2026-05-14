@@ -4,6 +4,7 @@ os: windows
 files:
   - source: \
     destination: C:\DCatalog\JobWorker
+file_exists_behavior: OVERWRITE
 
 hooks:
   BeforeInstall:
