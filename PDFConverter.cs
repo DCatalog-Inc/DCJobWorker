@@ -1209,7 +1209,7 @@ namespace JobWorker
                 {
                     oLink.showdisclaimer = oPageLink.Attributes["showdisclaimer"].Value;
                 }
-                oLink.frompdf = "1";
+                oLink.linkfrompdf = "1";
                 JObject oLinkJObject = JObject.FromObject(oLink);
                 if (string.IsNullOrEmpty(oLink.opacity))
                     oLinkJObject.Property("opacity").Remove();

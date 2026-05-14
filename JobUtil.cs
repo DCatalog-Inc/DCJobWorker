@@ -13,10 +13,35 @@ public sealed class JobUtil
         _log = log; _sp = sp;
         _map = new Dictionary<string, Type>(StringComparer.OrdinalIgnoreCase)
         {
-            ["JobExecutionConvertPDF"] = typeof(JobExecutionConvertPDF),
-            ["ReplacePages"] = typeof(ReplacePagesJob),
-            ["JobExecutionSaveLinksToCSV"] = typeof(JobExecutionSaveLinksToCSV)
-            // add more mappings…
+            // Original handlers
+            ["JobExecutionConvertPDF"]          = typeof(JobExecutionConvertPDF),
+            ["ReplacePages"]                    = typeof(ReplacePagesJob),
+            ["JobExecutionSaveLinksToCSV"]      = typeof(JobExecutionSaveLinksToCSV),
+
+            // Document management
+            ["JobExecutionReplacePage"]         = typeof(ActivatePagesJobWorker),
+            ["ActivateEditionsJob"]             = typeof(ActivateEditionsJobWorker),
+            ["JobHtmlGenerate"]                 = typeof(HtmlGenerateJobWorker),
+            ["ValidateIndexDocumentJob"]        = typeof(ValidateIndexDocumentJobWorker),
+            ["JobExecutionCopyLinks"]           = typeof(CopyLinksJobWorker),
+            ["FreeTrialJob"]                    = typeof(FreeTrialJobWorker),
+            ["JobAddToAILibrary"]               = typeof(AddToAILibraryJobWorker),
+            ["JobExecutionSavePageLabels"]      = typeof(GeneratePDFJobWorker),
+            ["JobExecutionCreateDownloadAllPDF"]= typeof(HDUpdateDownloadPDFJobWorker),
+            ["JobExecutionGenerateGifFlipbook"] = typeof(JobExecutionGenerateGifFlipbookWorker),
+
+            // Product imports
+            ["AdessoJob"]                       = typeof(AdessoJobWorker),
+            ["AirgasImportJob"]                 = typeof(AirgasImportJobWorker),
+            ["CCMPJob"]                         = typeof(CCMPJobWorker),
+            ["CeratizitJob"]                    = typeof(CeratizitJobWorker),
+            ["EverflowJob"]                     = typeof(EverflowJobWorker),
+            ["HedelProductJob"]                 = typeof(HedelProductJobWorker),
+            ["JFProductImportJob"]              = typeof(JFProductImportJobWorker),
+            ["MayZLProductJob"]                 = typeof(MaysZLProductJobWorker),
+            ["OdlJob"]                          = typeof(OdlJobWorker),
+            ["RubiesJob"]                       = typeof(RubiesJobWorker),
+            ["SummitImportProductJob"]          = typeof(SummitImportProductJobWorker),
         };
     }
 
