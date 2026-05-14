@@ -4,8 +4,6 @@ os: windows
 files:
   - source: \
     destination: C:\DCatalog\JobWorker
-    exclude:
-      - Tools\**
 file_exists_behavior: OVERWRITE
 
 hooks:
