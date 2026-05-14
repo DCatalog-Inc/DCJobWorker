@@ -3,7 +3,7 @@ os: windows
 
 files:
   - source: \
-    destination: C:\DCatalog\JobWorker
+    destination: C:\DCatalog\JobWorker-staging
 file_exists_behavior: OVERWRITE
 
 hooks:

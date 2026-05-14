@@ -7,8 +7,5 @@ if ($svc) {
     try { $svc.WaitForStatus('Stopped', (New-TimeSpan -Seconds 30)) } catch {}
 }
 
-# Remove app files only — leave Tools\ in place (locked native binaries)
-$installDir = "C:\DCatalog\JobWorker"
-if (Test-Path $installDir) {
-    Get-ChildItem $installDir -Exclude "Tools" | Remove-Item -Recurse -Force
-}
+# Clean up any leftover staging directory from a previous failed deployment
+Remove-Item "C:\DCatalog\JobWorker-staging" -Recurse -Force -ErrorAction SilentlyContinue

@@ -1,28 +1,27 @@
-$svc = "JobWorker"
+$svc     = "JobWorker"
+$exe     = "C:\DCatalog\JobWorker\JobWorker.exe"
+$nssm    = "C:\DCatalog\nssm\nssm.exe"
+$staging = "C:\DCatalog\JobWorker-staging"
+$dest    = "C:\DCatalog\JobWorker"
 
-$exe  = "C:\DCatalog\JobWorker\JobWorker.exe"
-$nssm = "C:\DCatalog\nssm\nssm.exe"
-
-
-# If service already exists, remove it cleanly
+# Remove old service registration
 if (Get-Service -Name $svc -ErrorAction SilentlyContinue) {
     & $nssm stop $svc
     & $nssm remove $svc confirm
 }
 
-# Install the service
+# Ensure destination and logs directories exist
+New-Item -ItemType Directory -Force -Path $dest | Out-Null
+New-Item -ItemType Directory -Force -Path "$dest\logs" | Out-Null
+
+# Robocopy new files over — Tools\ in $dest is untouched (not in staging)
+robocopy $staging $dest /E /IS /IT /COPYALL /NFL /NDL /NJH /NJS
+Remove-Item $staging -Recurse -Force -ErrorAction SilentlyContinue
+
+# Install and configure the service
 & $nssm install $svc $exe
-
-# Set working directory
-& $nssm set $svc AppDirectory "C:\DCatalog\JobWorker"
-
-# Auto restart on crash
+& $nssm set $svc AppDirectory $dest
 & $nssm set $svc Start SERVICE_AUTO_START
 & $nssm set $svc AppRestartDelay 5000
-
-# Optional: log stdout/stderr
-& $nssm set $svc AppStdout "C:\DCatalog\JobWorker\logs\stdout.log"
-& $nssm set $svc AppStderr "C:\DCatalog\JobWorker\logs\stderr.log"
-
-# Ensure logs folder exists
-New-Item -ItemType Directory -Force -Path "C:\DCatalog\JobWorker\logs" | Out-Null
+& $nssm set $svc AppStdout "$dest\logs\stdout.log"
+& $nssm set $svc AppStderr "$dest\logs\stderr.log"
