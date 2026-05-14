@@ -28,6 +28,27 @@ MySqlConfig mysqlConfig = await secrets.GetMySqlConfigAsync("MySqlDCServices");
 var SecretString = await secrets.GetSecretValueAsync("IRONPDFKey", "IRONPDFKEY");
 IronPdf.License.LicenseKey = SecretString;
 
+try
+{
+    var itextJson = await secrets.GetRawSecretAsync("iTextKey");
+    using var ms = new System.IO.MemoryStream(System.Text.Encoding.UTF8.GetBytes(itextJson));
+    LicenseKey.LoadLicenseFile(ms);
+    Log.Information("iText license loaded from Secrets Manager.");
+}
+catch (Exception ex)
+{
+    var fallbackFile = new FileInfo("secrets/itextkey.json");
+    if (fallbackFile.Exists)
+    {
+        try { LicenseKey.LoadLicenseFile(fallbackFile); Log.Information("iText license loaded from local file."); }
+        catch (Exception ex2) { Log.Warning(ex2, "iText license file found but could not be loaded."); }
+    }
+    else
+    {
+        Log.Warning(ex, "iText license not available — PDF operations may be limited.");
+    }
+}
+
 string connectionString =
     $"Server={mysqlConfig.Host};Port={mysqlConfig.Port};Database={mysqlConfig.Database};" +
     $"User Id={mysqlConfig.Username};Password={mysqlConfig.Password};" +
@@ -54,18 +75,6 @@ var builder = Host.CreateDefaultBuilder(args)
         // factory shares the same options; just change lifetime to Scoped
         services.AddDbContextFactory<ApplicationDbContext>(
             lifetime: ServiceLifetime.Scoped);
-        // iText license
-        var itextKeyFile = new FileInfo("secrets/itextkey.json");
-        if (itextKeyFile.Exists)
-        {
-            try { LicenseKey.LoadLicenseFile(itextKeyFile); }
-            catch (Exception ex) { Log.Warning(ex, "iText license file found but could not be loaded — PDF operations may be limited."); }
-        }
-        else
-        {
-            Log.Warning("iText license file not found at {Path} — PDF operations may be limited.", itextKeyFile.FullName);
-        }
-
         // Repository location
         try
         {
