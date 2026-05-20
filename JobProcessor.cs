@@ -60,6 +60,7 @@ public sealed class JobProcessor
         // mark Processing (optimistic concurrency)
         currentjob.Status = Constants.JobProcessingStatus.Processing.ToString();
         currentjob.Desctiption = "Start Processing";
+        currentjob.ProcessedBy = "DCJobWorker";
         currentjob.CreationTime = DateTime.Now;
         await _db.SaveChangesAsync(ct);
 
