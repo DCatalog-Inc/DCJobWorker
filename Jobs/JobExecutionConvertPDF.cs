@@ -277,6 +277,7 @@ namespace JobWorker.Jobs
                 oDocument = oConvertPDFDocumentInput.Document;
                 sOutputDirectory = DocumentUtilBase.getDocumentPath(oDocument);
                 oDocument.DocumentStatus = Constants.JobProcessingStatus.Processing.ToString();
+                oDocument.DocumentProcessedBy = "DCJobWorker@" + Environment.MachineName;
                 context.Update(oDocument);
                 context.SaveChanges();
             }

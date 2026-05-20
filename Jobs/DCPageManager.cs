@@ -109,6 +109,7 @@ namespace JobWorker.Jobs
                 {
 
                     oDocument = oReplacePageInput.Document;
+                    oDocument.DocumentProcessedBy = "DCJobWorker@" + Environment.MachineName;
                     sFullPDFFileName = oReplacePageInput.InputFileName;
                     sOutputDirectory = oReplacePageInput.OutputDirectory;
                     bReplacePDFForDownload = oReplacePageInput.replacedownloadPDF;
