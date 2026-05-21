@@ -7,14 +7,13 @@ if ($svc) {
     try { $svc.WaitForStatus('Stopped', (New-TimeSpan -Seconds 30)) } catch {}
 }
 
-# Clear CodeDeploy's deployment archive so it has no old manifest to clean up.
-# Without this, CodeDeploy tries to rmdir Tools\dcproxy from the previous revision
-# even when deploying to a different destination.
-$deployArchive = "C:\ProgramData\Amazon\CodeDeploy"
-if (Test-Path $deployArchive) {
-    Get-ChildItem $deployArchive -Directory -ErrorAction SilentlyContinue |
-        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-}
+# Kill any dcproxy/dcmutool processes that may still hold file locks
+Get-Process -Name "dcproxy","dcmutool" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Start-Sleep -Seconds 3
+
+# Remove the dcproxy directory so CodeDeploy's manifest cleanup can succeed.
+# These binaries are locked while the service runs; stopping it above frees them.
+Remove-Item "C:\DCatalog\JobWorker\Tools\dcproxy" -Recurse -Force -ErrorAction SilentlyContinue
 
 # Clean up any leftover staging directory from a previous failed deployment
 Remove-Item "C:\DCatalog\JobWorker-staging" -Recurse -Force -ErrorAction SilentlyContinue
