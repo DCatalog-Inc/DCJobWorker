@@ -4,3 +4,4 @@ bin/
 Tools/
 .vs/
 secrets/
+publish/
