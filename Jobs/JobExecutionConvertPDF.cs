@@ -262,6 +262,8 @@ namespace JobWorker.Jobs
             DocumentConvertor oDocumentConvertor = new DocumentConvertor();
             DCS3Services oDCS3Services = new DCS3Services();
             string sOutputDirectory = "";
+            try
+            {
             var oConvertPDFDocumentInput = await context.convertpdfdocumentinput
                             .Include(c => c.Job)  // eager load Job if needed
                             .Include(c => c.AWSFileUpload)  // eager load Job if needed
@@ -699,6 +701,20 @@ namespace JobWorker.Jobs
 
             }
             return true;
+            }
+            catch (Exception ex)
+            {
+                _log.LogError(ex, "JobExecutionConvertPDF failed for job {JobId}", oJob.Id);
+                if (oDocument != null)
+                {
+                    oDocument.DocumentStatus = Constants.JobProcessingStatus.Failed.ToString();
+                    oDocument.DocumentProcessingDescription = ex.Message.Length > 512 ? ex.Message[..512] : ex.Message;
+                    oDocument.DocumentProgressingPercent = 0;
+                    context.Update(oDocument);
+                    try { context.SaveChanges(); } catch { }
+                }
+                throw;
+            }
         }
     }
 }
