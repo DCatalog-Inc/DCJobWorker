@@ -56,9 +56,14 @@ namespace JobWorker.Jobs
             }
             catch (Exception e)
             {
-                //_log.LogError("Error when adding bookmarks " + e.Message.ToString());
-                //_log.LogError("Job id  " + oJob.Id);
-
+                // Don't swallow: a silent catch here made failed runs report "Completed"
+                // with csvurl = NULL, so the UI never offered the CSV download.
+                Console.WriteLine($"# SaveLinksToCSV failed for job {oJob.Id}: {e}");
+                oJob.Status = Constants.JobProcessingStatus.Failed.ToString();
+                oJob.Desctiption = "Save links to CSV failed: " + e.Message;
+                _context.Update(oJob);
+                await _context.SaveChangesAsync();
+                return false;
             }
 
 
@@ -169,6 +174,7 @@ namespace JobWorker.Jobs
             }
             string sURL = dcs3services.uploadFile(sBucketName, sCSVFullFileName, sKeyPrefix);
             savelinkstocsv.csvurl= sURL;
+            await _context.SaveChangesAsync(); // persist csvurl — the Progress endpoint reads it for the download link
             return true;
 
         }
