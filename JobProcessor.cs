@@ -70,7 +70,22 @@ public sealed class JobProcessor
 
         try
         {
-            await _jobUtil.ExecuteJobAsync(currentjob, ct);
+            bool ok = await _jobUtil.ExecuteJobAsync(currentjob, ct);
+            if (!ok)
+            {
+                // Handler reported failure (or no handler registered). It may have already
+                // written Failed + reason to the job row — don't overwrite that with
+                // "Completed" (which used to hide real errors from the admin UI).
+                if (currentjob.Status != Constants.JobProcessingStatus.Failed.ToString())
+                {
+                    currentjob.Status = Constants.JobProcessingStatus.Failed.ToString();
+                    currentjob.Desctiption = "Job handler reported failure (see worker logs).";
+                    currentjob.CreationTime = DateTime.Now;
+                    await _db.SaveChangesAsync(ct);
+                }
+                return true; // delete message — failure is recorded on the job row
+            }
+
             currentjob.Status = Constants.JobProcessingStatus.Completed.ToString();
             currentjob.Desctiption = "Completed";
             currentjob.Progress = 100;
