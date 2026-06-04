@@ -14,8 +14,10 @@ if (Get-Service -Name $svc -ErrorAction SilentlyContinue) {
 New-Item -ItemType Directory -Force -Path $dest | Out-Null
 New-Item -ItemType Directory -Force -Path "$dest\logs" | Out-Null
 
-# Robocopy new files over — Tools\ in $dest is untouched (not in staging)
-robocopy $staging $dest /E /IS /IT /COPYALL /NFL /NDL /NJH /NJS
+# Robocopy new files over and PURGE stale ones — the May 2026 outage was caused by
+# leftover self-contained runtime files mixing with a framework-dependent build.
+# Tools\ and logs\ live only in $dest (not in staging) and are protected from /PURGE.
+robocopy $staging $dest /E /IS /IT /COPYALL /PURGE /XD "$dest\Tools" "$dest\logs" /NFL /NDL /NJH /NJS
 Remove-Item $staging -Recurse -Force -ErrorAction SilentlyContinue
 
 # Install and configure the service

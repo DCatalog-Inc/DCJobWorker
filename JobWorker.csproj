@@ -5,6 +5,8 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UserSecretsId>dotnet-JobWorker-54f9d8de-5bcd-4a6b-86ec-325409267176</UserSecretsId>
+    <!-- publish-deploy/ lives inside the project dir; keep its copied sources/content out of the compile -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);publish-deploy/**</DefaultItemExcludes>
   </PropertyGroup>
 
   <ItemGroup>
