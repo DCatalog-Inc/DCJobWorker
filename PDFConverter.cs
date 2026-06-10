@@ -1618,27 +1618,42 @@ namespace JobWorker
                 //existingPdf.Dispose();
                 //newPdf.Dispose();
 
-                //Updated Itext7
-                // Paths
+                // Merge via cpdf.exe (bundled + proven — the same tool used for page deletion). The prior
+                // iText CopyPagesTo + PdfPageFormCopier path threw a contentless "Unknown PdfException" on
+                // catalog PDFs whose AcroForm structure the form-copier couldn't reconcile, even though
+                // both PDFs open and page-count fine on their own.
                 string existingPdfPath = sExistingPDF;
                 string newPdfPath = sPDFToAdd;
-                string tempOutput = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(existingPdfPath), "temp.pdf");
+                string dir = System.IO.Path.GetDirectoryName(existingPdfPath);
+                string tempOutput = System.IO.Path.Combine(dir, "temp_addpages.pdf");
+                try { if (System.IO.File.Exists(tempOutput)) System.IO.File.Delete(tempOutput); } catch { }
 
-                // Determine start page index (0-based in IronPDF, 1-based in iText7)
-                int startPageIndex = bAddAfter ? nPageNumber : nPageNumber - 1;
+                // Existing page count (read-only open works — only the form-copier merge failed).
+                int nExisting;
+                using (var reader = new PdfReader(existingPdfPath))
+                using (var doc = new iText.Kernel.Pdf.PdfDocument(reader))
+                    nExisting = doc.GetNumberOfPages();
 
-                using (iText.Kernel.Pdf.PdfDocument pdfDoc = new iText.Kernel.Pdf.PdfDocument(new PdfReader(existingPdfPath), new PdfWriter(tempOutput)))
-                using (iText.Kernel.Pdf.PdfDocument newPdf = new iText.Kernel.Pdf.PdfDocument(new PdfReader(newPdfPath)))
+                // How many existing pages precede the inserted block.
+                int insertAfter = bAddAfter ? nPageNumber : nPageNumber - 1;
+                if (insertAfter < 0) insertAfter = 0;
+                if (insertAfter > nExisting) insertAfter = nExisting;
+
+                // cpdf merge: <existing 1-insertAfter> <new all> <existing insertAfter+1-end> -o temp
+                var cpdfArgs = new System.Text.StringBuilder();
+                if (insertAfter >= 1)
+                    cpdfArgs.Append("\"" + existingPdfPath + "\" 1-" + insertAfter + " ");
+                cpdfArgs.Append("\"" + newPdfPath + "\" ");
+                if (insertAfter < nExisting)
+                    cpdfArgs.Append("\"" + existingPdfPath + "\" " + (insertAfter + 1) + "-end ");
+                cpdfArgs.Append("-o \"" + tempOutput + "\"");
+
+                if (!RunCpdf(cpdfArgs.ToString()))
+                    return false;
+                if (!System.IO.File.Exists(tempOutput))
                 {
-                    // PdfPageFormCopier preserves annotations, form fields, and other content
-                    var copier = new PdfPageFormCopier();
-
-                    // iText7 pages are 1-based
-                    int totalExistingPages = pdfDoc.GetNumberOfPages();
-                    int insertPosition = startPageIndex + 1; // insertion point in iText7
-
-                    // Copy pages from new PDF to the existing PDF at the desired position
-                    newPdf.CopyPagesTo(1, newPdf.GetNumberOfPages(), pdfDoc, insertPosition, copier);
+                    Console.WriteLine("cpdf merge produced no output file: " + tempOutput);
+                    return false;
                 }
 
                 // Replace original PDF
@@ -1654,6 +1669,46 @@ namespace JobWorker
             }
 
             return true;
+        }
+
+        // Runs the bundled cpdf.exe (resolved the same way PDFExtractPagesCPDF does: next to the worker
+        // exe, or under Tools\). Returns true only on exit code 0.
+        private bool RunCpdf(string arguments)
+        {
+            string[] candidates = {
+                System.IO.Path.Combine(AppContext.BaseDirectory, "cpdf.exe"),
+                System.IO.Path.Combine(AppContext.BaseDirectory, "Tools", "cpdf.exe")
+            };
+            string exe = "cpdf.exe";
+            foreach (var c in candidates) { if (System.IO.File.Exists(c)) { exe = c; break; } }
+
+            var psi = new System.Diagnostics.ProcessStartInfo(exe, arguments)
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardError = true,
+                RedirectStandardOutput = true
+            };
+            try
+            {
+                using (var p = System.Diagnostics.Process.Start(psi))
+                {
+                    string err = p.StandardError.ReadToEnd();
+                    string outp = p.StandardOutput.ReadToEnd();
+                    p.WaitForExit();
+                    if (p.ExitCode != 0)
+                    {
+                        Console.WriteLine("cpdf failed (exit " + p.ExitCode + ") exe=" + exe + " args=" + arguments + " err=" + err + " out=" + outp);
+                        return false;
+                    }
+                    return true;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("cpdf launch failed (exe=" + exe + "): " + ex);
+                return false;
+            }
         }
 
         /*
