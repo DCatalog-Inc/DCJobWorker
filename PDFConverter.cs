@@ -1750,9 +1750,10 @@ namespace JobWorker
             ElasticSearchEngine oElasticSearchEngine = new ElasticSearchEngine(sIndexName);
             oElasticSearchEngine.createIndex(sIndexName);
 
-            //Delete the document if already exists.
-            oElasticSearchEngine.deleteDocument(sIndexName, oDocument.Id.ToString());
-            oElasticSearchEngine.addDocument(sIndexName, oDocument);
+            // Non-destructive upsert (no blind pre-delete). addDocument purges stale pages only after a
+            // fully-successful index and returns false (leaving existing data intact) on any failure.
+            if (!oElasticSearchEngine.addDocument(sIndexName, oDocument))
+                Console.WriteLine($"# indexDocument: OpenSearch index incomplete for doc {oDocument.Id} (index {sIndexName}); existing index left unchanged");
         }
 
         static public bool createTextFiles(ApplicationDbContext context, document oDocument)
