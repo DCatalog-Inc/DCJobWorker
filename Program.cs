@@ -104,6 +104,20 @@ var builder = Host.CreateDefaultBuilder(args)
             DCCommon.Instance.RepositoryLocationDB ??= DCCommon.Instance.RepositoryLocation;
         }
 
+        // OpenSearch — initialize the static search endpoint used by document indexing
+        // (DocumentConvertor.indexDocument in the convert pipeline). Without this,
+        // ElasticSearchEngine builds new Uri(null) -> "Value cannot be null (uriString)".
+        var searchUri = ctx.Configuration["OpenSearch:Endpoint"];
+        if (!string.IsNullOrEmpty(searchUri))
+        {
+            ElasticSearchEngine.Init(searchUri);
+            Log.Information("ElasticSearchEngine initialized: {Uri}", searchUri);
+        }
+        else
+        {
+            Log.Warning("OpenSearch:Endpoint not configured — document indexing will fail.");
+        }
+
         // Email / SMS
         services.Configure<AuthMessageSenderOptions>(ctx.Configuration.GetSection("Email"));
         services.AddTransient<IEmailSender, JobWorkerMessageSender>();
