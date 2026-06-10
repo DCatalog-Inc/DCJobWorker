@@ -1027,15 +1027,51 @@ namespace JobWorker.Jobs
                  .Include(r => r.Job)
                  .Where(p => p.Id == sdeletepagesinput)
                  .FirstOrDefault();
-                DeletePages(odeletepagesinput);
- 
+                bool delOk = DeletePages(odeletepagesinput);
+
+                document oDocumentDiag = odeletepagesinput.Document;
+                // DIAGNOSTIC (readable via DB; JobProcessor overwrites job.Desctiption but not the
+                // input row): record what the worker actually produced locally — the renumbered page
+                // count + the id now at sequence 2. Lets us tell an internal renumber failure apart
+                // from an external overwrite of the corrected document.json.
+                try
+                {
+                    string djp = Path.Combine(DocumentUtilBase.getDocumentPath(oDocumentDiag), "document.json");
+                    if (File.Exists(djp))
+                    {
+                        JObject djj = JObject.Parse(File.ReadAllText(djp));
+                        JArray djpages = (JArray)djj["issue"]["page"];
+                        JToken p2 = djpages.FirstOrDefault(x => (string)x["@attributes"]["sequence"] == "2");
+                        string seq2id = p2 != null ? (string)p2["@attributes"]["id"] : "missing";
+                        odeletepagesinput.Description = (odeletepagesinput.Description ?? "") + $" || POST delOk={delOk} npages={oDocumentDiag.NumberOfPages} jsonpages={djpages.Count} seq2id={seq2id}";
+                    }
+                    else
+                        odeletepagesinput.Description = $"DEL delOk={delOk} LOCAL document.json MISSING";
+                    _context.Update(odeletepagesinput);
+                    _context.SaveChanges();
+                }
+                catch (Exception dex)
+                {
+                    odeletepagesinput.Description = "DEL diag-err: " + dex.Message;
+                    _context.Update(odeletepagesinput);
+                    _context.SaveChanges();
+                }
+
+                if (!delOk)
+                {
+                    job oJobFail = odeletepagesinput.Job;
+                    oJobFail.Status = Constants.JobProcessingStatus.Failed.ToString();
+                    oJobFail.Desctiption = "Delete pages failed (PDF edit returned false / aborted)";
+                    _context.Update(oJobFail);
+                    _context.SaveChanges();
+                    return false;
+                }
+
                 job oJob =  odeletepagesinput.Job;
-                oJob.Progress = 60;
-                oJob.Status = Constants.JobProcessingStatus.Processing.ToString();
-                _context.Update(oJob);
                 //3. Upload files
                 document oDocument = odeletepagesinput.Document;
                 updateDocument(oDocument);
+                UpdateProgress(oJob, 85);   // uploaded to S3
 
                 string sDocumentPath = DocumentUtilBase.getDocumentPath(oDocument);
                 string sPDFFileName = Path.Combine(sDocumentPath, oDocument.PDFFileName);
@@ -1052,7 +1088,11 @@ namespace JobWorker.Jobs
                 
 
                 DCJobs.DocumentConvertor.indexDocument(_context, oDocument);
-                DCJobs.DocumentConvertor.createTextFiles(_context, oDocument).GetAwaiter().GetResult();
+                UpdateProgress(oJob, 95);   // re-indexed in OpenSearch
+                // NOTE: DeletePages already regenerated the page HTML (convertAllPagesMuPDF) and that
+                // output was what updateDocument uploaded and indexDocument indexed. Calling
+                // createTextFiles here re-rendered the ENTIRE document's HTML a second time AFTER the
+                // upload+index — wasted work that doubled the delete time. Removed.
 
                 oJob.Progress = 100;
                 oJob.Status = Constants.JobProcessingStatus.Completed.ToString();
@@ -1171,7 +1211,9 @@ namespace JobWorker.Jobs
 
             //1. Download files.
             string sBucketName = Constants.DEFAULT_DOCS_LOCATION;
-            downloadFilesForDelete(oDocument, sBucketName, nFromPage, nToPage);
+            UpdateProgress(odeletepagesinput.Job, 5);    // started — move off 0 immediately
+            downloadFilesForDelete(oDocument, sBucketName, nFromPage, nToPage, odeletepagesinput.Job);
+            UpdateProgress(odeletepagesinput.Job, 15);   // files downloaded
             if (checkJobStatus(odeletepagesinput.Job, "Download Files") == false)
                 return false;
 
@@ -1191,10 +1233,11 @@ namespace JobWorker.Jobs
             string outputfile = Path.Combine(e2.OutputDir, oDocument.PDFFileName);
             e2.PDFTargetFileName = outputfile;
             bRet = e2.Execute();
+            UpdateProgress(odeletepagesinput.Job, 25);   // PDF cut done
 
-           
             DCJobs.DocumentConvertor oDocumentConvertor = new DCJobs.DocumentConvertor(_logger);
             oDocumentConvertor.RenameFilesDelete(nPageNumber, oDocument, sOutputDirectory, nNumberOfPagesToRemove);
+            UpdateProgress(odeletepagesinput.Job, 40);   // page files shifted
 
             string docfilepath = Path.Combine(sOutputDirectory, "document.json");
             JObject docJson = JObject.Parse(System.IO.File.ReadAllText(docfilepath));
@@ -1276,19 +1319,35 @@ namespace JobWorker.Jobs
             IEnumerable<JToken> bookmarksitems = docJson.SelectTokens(selectsequence);
             updateBookmarksRemove(bookmarksitems, nPageNumber, nNumberOfPagesToRemove);
 
+            // Persist the renumbered document.json + page count IMMEDIATELY (the page files were
+            // already renamed by RenameFilesDelete). Doing this before any early-exit guarantees the
+            // document structure/labels always match the shifted files — bailing here previously left
+            // the doc half-edited (files shifted, document.json/labels not), which is the page-number
+            // + search-highlight mismatch we saw.
+            int afterLoopPageCount = ((JArray)docJson["issue"]["page"]).Count;
+            System.IO.File.WriteAllText(docfilepath, docJson.ToString());
+            // INTERNAL instrumentation (read via deletepagesinput.Description): pinpoints whether the
+            // renumber loop actually shifted. loopBound = oDocument.NumberOfPages at loop start.
+            try
+            {
+                odeletepagesinput.Description = $"INT loopBound={nPageCount} pdfPageCount={nPDFPageCount} fromPg={nPageNumber} remove={nNumberOfPagesToRemove} afterLoopPages={afterLoopPageCount} cpdfOk={bRet}";
+                _context.Update(odeletepagesinput);
+                _context.SaveChanges();
+            }
+            catch { }
+            oDocument.NumberOfPages = oDocument.NumberOfPages - nNumberOfPagesToRemove;
+            updateTOCLinksRemove(oDocument, nPageNumber, nNumberOfPagesToRemove);
+            _context.Update(oDocument);
 
             if (checkJobStatus(odeletepagesinput.Job, "Before index document") == false)
                 return false;
 
-
             //Update goto page links.
-            System.IO.File.WriteAllText(docfilepath, docJson.ToString());
+            UpdateProgress(odeletepagesinput.Job, 50);   // document.json renumbered + saved
             string sHTMLOutputDirectory = Path.Combine(sOutputDirectory, "html");
             SearchHighligh.deleteDocument(_context,oDocument.Id.ToString());
             PDF2HTML.convertAllPagesMuPDF(sPDFFileName, sOutputDirectory, sHTMLOutputDirectory);
-            oDocument.NumberOfPages = oDocument.NumberOfPages - nNumberOfPagesToRemove;
-            updateTOCLinksRemove(oDocument, nPageNumber, nNumberOfPagesToRemove);
-            _context.Update(oDocument);
+            UpdateProgress(odeletepagesinput.Job, 70);   // page HTML/images regenerated
             return bRet;
         }
 
@@ -1371,6 +1430,21 @@ namespace JobWorker.Jobs
                 }
 
             }
+        }
+
+        // Persists incremental job progress so the admin progress modal (polling
+        // /Progress/checkJobStatus) advances during the multi-step delete instead of sitting at one %.
+        private void UpdateProgress(job oJob, int pct)
+        {
+            try
+            {
+                if (oJob == null) return;
+                oJob.Progress = pct;
+                oJob.Status = Constants.JobProcessingStatus.Processing.ToString();
+                _context.Update(oJob);
+                _context.SaveChanges();
+            }
+            catch { /* progress is best-effort; never fail the job over it */ }
         }
 
         public bool checkJobStatus(job oJob,string step)
@@ -1508,7 +1582,7 @@ namespace JobWorker.Jobs
             oDCS3Services.uploadDirectory(sBucketName, sOutputDirectory, sKeyPrefix);
             return true;
         }
-        public bool downloadFilesForDelete(document oDocument, string sBucketName, int nFromPage, int nToPage)
+        public bool downloadFilesForDelete(document oDocument, string sBucketName, int nFromPage, int nToPage, job oProgressJob = null)
         {
             //PDF,Image,Jpg,json,Svg?
 
@@ -1589,8 +1663,14 @@ namespace JobWorker.Jobs
             int nNumberOfPagesToRemove = nToPage - nPageNumber + 1;
 
             int nPageCount = oDocument.NumberOfPages;
+            int nDownloadTotal = Math.Max(1, nPageCount - nPageNumber);
+            int nProgressStep = Math.Max(1, nDownloadTotal / 10);
             for (int i = 0; i < nPageCount - nPageNumber; i++)
             {
+                // Crawl the bar from 5..14 across the (potentially long) per-page download so it
+                // doesn't sit at 0 while ~4 files/page are pulled from S3.
+                if (oProgressJob != null && i % nProgressStep == 0)
+                    UpdateProgress(oProgressJob, 5 + (int)((double)i / nDownloadTotal * 9));
                 int nCurrentPage = nPageNumber + nNumberOfPagesToRemove + i;
                 int nNewCurrentPage = nPageNumber + i;
                 string sName = string.Format("Page_{0}.json", nCurrentPage);
