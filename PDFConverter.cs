@@ -1647,7 +1647,9 @@ namespace JobWorker
             }
             catch (Exception ex)
             {
-                Console.WriteLine("Exception when adding pages: " + ex.Message);
+                // Log the FULL exception (was only ex.Message="Unknown PdfException", which hid the real
+                // iText cause). The merge previously also failed because the caller held the PDFs open.
+                Console.WriteLine("Exception when adding pages: " + ex);
                 return false;
             }
 

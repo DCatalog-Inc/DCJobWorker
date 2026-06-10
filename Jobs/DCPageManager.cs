@@ -574,17 +574,21 @@ namespace JobWorker.Jobs
             DCJobs.DocumentConvertor oDocumentConvertor2 = new DCJobs.DocumentConvertor(_logger);
             oDocumentConvertor2.init(sNewPDFFile);
             int nPageToAddCount = oDocumentConvertor2.getNumberOfPages();
+            oDocumentConvertor2.release();   // free the file-to-add handle BEFORE the merge re-opens/deletes it
             DCJobs.DocumentConvertor oDocumentConvertor = new DCJobs.DocumentConvertor(_logger);
             oDocumentConvertor.init(sPDFFileName);
             int nPageCount = oDocumentConvertor.getNumberOfPages();
-            oDocumentConvertor.AddPagesToPDF(nPageNumber, sPDFFileName, sNewPDFFile, bAddafter);
-            oDocumentConvertor2.release();
-            File.Delete(sNewPDFFile);
+            oDocumentConvertor.release();    // free the existing-PDF handle BEFORE the merge deletes/replaces it
+            // Hold NO PDF file handles here: AddPagesToPDF re-opens both PDFs and File.Delete/Move's the
+            // existing one. The previous code left these init() handles open during the merge, causing
+            // "file being used by another process" and the merge to throw "Unknown PdfException".
+            if (!oDocumentConvertor.AddPagesToPDF(nPageNumber, sPDFFileName, sNewPDFFile, bAddafter))
+                throw new Exception("AddPagesToPDF failed merging '" + sFileToAdd + "' into " + oDocument.PDFFileName);
+            try { File.Delete(sNewPDFFile); } catch { }
             UpdateProgress(oaddpagesinput.Job, 35);   // pages merged into PDF
             if (bAddafter)
                 nPageNumber++;
             oDocumentConvertor.RenameFiles(nPageNumber, oDocument, sOutputDirectory, nPageToAddCount, bAddafter);
-            oDocumentConvertor.release();
             UpdateProgress(oaddpagesinput.Job, 50);   // existing page files shifted
             DCJobs.DocumentConvertor oDocumentConvertor3 = new DCJobs.DocumentConvertor(_logger); //Todo reopen document instead
             oDocumentConvertor3.init(sPDFFileName);
