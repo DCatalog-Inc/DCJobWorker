@@ -547,11 +547,19 @@ namespace JobWorker.Jobs
             string sBucketName = oaddpagesinput.bucketname;
             string sFileToAdd = oaddpagesinput.filename;
 
-
+            // The EXISTING document files (PDF, document.json, page files) must be present locally for
+            // init()/RenameFiles below. On the SQS worker the per-job local dir is empty, so download the
+            // whole doc first (delete does this via downloadFilesForDelete). downloadFiles() cleans +
+            // repopulates the dir, so it MUST run before the file-to-add is downloaded into it.
+            UpdateProgress(oaddpagesinput.Job, 10);
+            string sDocBucket = string.IsNullOrEmpty(oDocument.Publication?.Publisher?.BucketName)
+                ? Constants.DEFAULT_DOCS_LOCATION : oDocument.Publication.Publisher.BucketName;
+            downloadFiles(oDocument, sDocBucket);
+            UpdateProgress(oaddpagesinput.Job, 20);
 
             string sOutputDirectory = DocumentUtilBase.getDocumentPath(oDocument);
 
-           
+
             string sDocumentPath = DocumentUtilBase.getDocumentPath(oDocument);
             string sPDFFileName = Path.Combine(sDocumentPath, oDocument.PDFFileName);
             string sFileToAddName = Guid.NewGuid().ToString() + ".pdf";
@@ -572,10 +580,12 @@ namespace JobWorker.Jobs
             oDocumentConvertor.AddPagesToPDF(nPageNumber, sPDFFileName, sNewPDFFile, bAddafter);
             oDocumentConvertor2.release();
             File.Delete(sNewPDFFile);
+            UpdateProgress(oaddpagesinput.Job, 35);   // pages merged into PDF
             if (bAddafter)
                 nPageNumber++;
             oDocumentConvertor.RenameFiles(nPageNumber, oDocument, sOutputDirectory, nPageToAddCount, bAddafter);
             oDocumentConvertor.release();
+            UpdateProgress(oaddpagesinput.Job, 50);   // existing page files shifted
             DCJobs.DocumentConvertor oDocumentConvertor3 = new DCJobs.DocumentConvertor(_logger); //Todo reopen document instead
             oDocumentConvertor3.init(sPDFFileName);
             string docfilepath = Path.Combine(sOutputDirectory, "document.json");
@@ -751,11 +761,8 @@ namespace JobWorker.Jobs
             //PDF2HTML.convertAllPagesCommandLine(sPDFFileName, sDocumentPath, sHTMLOutputDirectory);
             oDocument.NumberOfPages = oDocument.NumberOfPages + nPageToAddCount;
             updateTOCLinks(oDocument, nPageNumber, nPageToAddCount);
+            UpdateProgress(oaddpagesinput.Job, 75);   // new-page images + HTML regenerated
 
-                //Update document.json.
-
-
-            
             return true;
         }
 

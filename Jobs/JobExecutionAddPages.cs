@@ -65,12 +65,16 @@ namespace JobWorker.Jobs
                 var mgr = new DCPageManager(context, _emailSender,
                     NullLogger<ProductImportJob>.Instance, _sqs);
 
-                // Modifies the local document files + input.Document.NumberOfPages (same tracked instance).
+                // Downloads the existing doc, merges the PDF, shifts files, regenerates HTML/images,
+                // and updates input.Document.NumberOfPages (same tracked instance). Reports progress
+                // up to ~75 via the job row. Throws on failure (caught below -> Failed).
                 mgr.AddPages(input.Id);
 
                 document oDocument = input.Document;
                 // Upload the regenerated document directory back to S3.
                 mgr.updateDocument(oDocument);
+                oJob.Progress = 90; oJob.Status = Constants.JobProcessingStatus.Processing.ToString();
+                context.Update(oJob); await context.SaveChangesAsync(ct);   // uploaded
 
                 string sDocumentPath = DocumentUtilBase.getDocumentPath(oDocument);
                 string sPDFFileName = Path.Combine(sDocumentPath, oDocument.PDFFileName);
@@ -78,7 +82,10 @@ namespace JobWorker.Jobs
                     oDocument.crc32 = DCPageManager.GetCrc32(sPDFFileName);
 
                 DCJobs.DocumentConvertor.indexDocument(context, oDocument);
-                DCJobs.DocumentConvertor.createTextFiles(context, oDocument).GetAwaiter().GetResult();
+                oJob.Progress = 97; context.Update(oJob); await context.SaveChangesAsync(ct);   // re-indexed
+                // NOTE: AddPages already regenerated the page HTML (convertAllPagesMuPDF) which
+                // updateDocument uploaded and indexDocument indexed. Calling createTextFiles here would
+                // re-render the whole document a second time, unused — removed (matches DelPage).
 
                 oJob.Progress = 100;
                 oJob.Status = Constants.JobProcessingStatus.Completed.ToString();
