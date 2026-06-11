@@ -86,6 +86,13 @@ public sealed class JobProcessor
                 return true; // delete message — failure is recorded on the job row
             }
 
+            // A handler may have re-queued the job for the legacy worker (unported
+            // job types are forwarded to the HP queue with status reset to Waiting).
+            // Stamping Completed here would make the legacy worker's Waiting-only
+            // guard skip it — the replace-pages forwarding bug all over again.
+            if (currentjob.Status == "Waiting" || currentjob.Status == "WaitingInQueue")
+                return true; // delete message; the legacy worker owns the job now
+
             currentjob.Status = Constants.JobProcessingStatus.Completed.ToString();
             currentjob.Desctiption = "Completed";
             currentjob.Progress = 100;

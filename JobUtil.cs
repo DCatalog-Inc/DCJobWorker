@@ -58,8 +58,10 @@ public sealed class JobUtil
         if (oJob?.JobType == null) { _log.LogError("JobType is null for {JobId}", oJob?.Id); return false; }
         if (!_map.TryGetValue(oJob.JobType.Name, out var type))
         {
-            _log.LogError("No handler for job type {Type}", oJob.JobType.Name);
-            return false;
+            // Not ported to this worker yet (e.g. JobExecutionIntroPage) — hand it
+            // to the legacy DocProcessor instead of failing the job.
+            _log.LogWarning("No handler for job type {Type} — forwarding to legacy queue", oJob.JobType.Name);
+            type = typeof(ForwardToLegacyQueue);
         }
 
         var handler = (IJobExecution)ActivatorUtilities.CreateInstance(_sp, type);
