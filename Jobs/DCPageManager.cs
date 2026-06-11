@@ -110,7 +110,11 @@ namespace JobWorker.Jobs
                     oDocument = oReplacePageInput.Document;
                     oDocument.DocumentProcessedBy = "DCJobWorker@" + Environment.MachineName;
                     sFullPDFFileName = oReplacePageInput.InputFileName;
-                    sOutputDirectory = oReplacePageInput.OutputDirectory;
+                    // input.OutputDirectory is computed by the ADMIN from the shared
+                    // serversettings RepositoryLocation (D:\DCatalog\Docs — the legacy
+                    // DocProcessor layout). This box has no D: drive; stage everything
+                    // under the worker's own repository path instead.
+                    sOutputDirectory = DocumentUtilBase.getDocumentPath(oDocument);
                     bReplacePDFForDownload = oReplacePageInput.replacedownloadPDF;
                     sBucketName = oReplacePageInput.bucketname;
                     sFullPDFFileUrl = oReplacePageInput.PDFFileUrl;
@@ -144,7 +148,10 @@ namespace JobWorker.Jobs
 
                 if (sFullPDFFileUrl != "")
                 {
-                    string sDownloadDir = Path.GetDirectoryName(sFullPDFFileName);
+                    // input.InputFileName points at the ADMIN's upload location — also not
+                    // valid on this box. The uploaded page PDF is fetched from S3 anyway,
+                    // so stage it in the local document directory (created above).
+                    string sDownloadDir = sOutputDirectory;
                     if (!Directory.Exists(sDownloadDir))
                     {
                         _logger.LogDebug("Directory does not exists... creating directory: " + sDownloadDir);
