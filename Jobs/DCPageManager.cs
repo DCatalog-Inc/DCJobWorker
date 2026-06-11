@@ -501,8 +501,9 @@ namespace JobWorker.Jobs
                 _context.Update(oDocument);
                 _context.SaveChanges();
 
-
-                _logger.LogError("Error Executing Job " + e.Message);
+                _logger.LogError(e, "ReplacePages failed for job {JobId}", oJob?.Id);
+                // _logger may be a NullLogger depending on the caller — stdout is always captured.
+                Console.WriteLine("ReplacePages failed for job " + oJob?.Id + ": " + e);
 
             }
 

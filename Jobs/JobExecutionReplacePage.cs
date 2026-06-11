@@ -75,6 +75,7 @@ namespace JobWorker.Jobs
 
                 if (jobRow.Status == Constants.JobProcessingStatus.Failed.ToString())
                 {
+                    _log.LogError("ReplacePage job {JobId} failed: {Reason}", oJob.Id, jobRow.Desctiption);
                     // Mirror so JobProcessor keeps the detailed reason instead of stamping Completed.
                     oJob.Status = jobRow.Status;
                     oJob.Desctiption = jobRow.Desctiption;
