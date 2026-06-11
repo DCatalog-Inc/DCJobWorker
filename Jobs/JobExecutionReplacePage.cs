@@ -9,6 +9,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using System;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -81,6 +82,19 @@ namespace JobWorker.Jobs
                     oJob.Desctiption = jobRow.Desctiption;
                     return false;
                 }
+
+                // Page swapped — now refresh search. ReplacePages' indexPageInDocument calls
+                // core ElasticSearchEngine.addPage, which is a stub (indexing body commented
+                // out), and nothing uploads the regenerated html/ artifacts SearchHighlight
+                // reads from S3. Finalize like JobExecutionAddPages: regenerate page text
+                // (dcmutool), upload the document dir, then full re-index.
+                document oDocument = input.Document;
+                string sDocumentPath = DocumentUtilBase.getDocumentPath(oDocument);
+                string sPDFFileName = Path.Combine(sDocumentPath, oDocument.PDFFileName);
+                PDF2HTML.convertAllPagesText(sPDFFileName, sDocumentPath, "html");
+                mgr.updateDocument(oDocument);
+                DCJobs.DocumentConvertor.indexDocument(context, oDocument);
+                _log.LogInformation("ReplacePage job {JobId}: re-indexed document {DocId}", oJob.Id, oDocument.Id);
 
                 return true;
             }
