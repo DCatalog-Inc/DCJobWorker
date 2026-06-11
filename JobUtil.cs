@@ -19,7 +19,7 @@ public sealed class JobUtil
             ["JobExecutionSaveLinksToCSV"]      = typeof(JobExecutionSaveLinksToCSV),
 
             // Document management
-            ["JobExecutionReplacePage"]         = typeof(ActivatePagesJobWorker),
+            ["JobExecutionReplacePage"]         = typeof(JobExecutionReplacePage),
             ["ActivateEditionsJob"]             = typeof(ActivateEditionsJobWorker),
             ["JobHtmlGenerate"]                 = typeof(HtmlGenerateJobWorker),
             ["ValidateIndexDocumentJob"]        = typeof(ValidateIndexDocumentJobWorker),
