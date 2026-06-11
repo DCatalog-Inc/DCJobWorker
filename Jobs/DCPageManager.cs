@@ -562,6 +562,8 @@ namespace JobWorker.Jobs
 
             string sDocumentPath = DocumentUtilBase.getDocumentPath(oDocument);
             string sPDFFileName = Path.Combine(sDocumentPath, oDocument.PDFFileName);
+            if (!File.Exists(sPDFFileName))
+                throw new Exception("Existing document PDF missing after download: " + sPDFFileName);
             string sFileToAddName = Guid.NewGuid().ToString() + ".pdf";
             string sNewPDFFile = Path.Combine(sDocumentPath, sFileToAddName);
             DCS3Services oDCS3Services = new DCS3Services();
@@ -575,14 +577,22 @@ namespace JobWorker.Jobs
             oDocumentConvertor2.init(sNewPDFFile);
             int nPageToAddCount = oDocumentConvertor2.getNumberOfPages();
             oDocumentConvertor2.release();   // free the file-to-add handle BEFORE the merge re-opens/deletes it
+            if (nPageToAddCount < 1)
+                throw new Exception("Uploaded PDF unreadable (encrypted/damaged?): " + sFileToAdd);
             DCJobs.DocumentConvertor oDocumentConvertor = new DCJobs.DocumentConvertor(_logger);
             oDocumentConvertor.init(sPDFFileName);
             int nPageCount = oDocumentConvertor.getNumberOfPages();
             oDocumentConvertor.release();    // free the existing-PDF handle BEFORE the merge deletes/replaces it
-            // Hold NO PDF file handles here: AddPagesToPDF re-opens both PDFs and File.Delete/Move's the
-            // existing one. The previous code left these init() handles open during the merge, causing
-            // "file being used by another process" and the merge to throw "Unknown PdfException".
-            if (!oDocumentConvertor.AddPagesToPDF(nPageNumber, sPDFFileName, sNewPDFFile, bAddafter))
+            if (nPageCount < 1)
+                throw new Exception("Existing document PDF unreadable: " + sPDFFileName);
+            // Hold NO PDF file handles here: AddPagesToPDF re-opens both PDFs and replaces the
+            // existing one (release() above now truly closes the iText readers).
+            // Merge via the worker's cpdf-backed AddPagesToPDF (JobWorker.DocumentConvertor in
+            // PDFConverter.cs) — the DCJobs iText PdfPageFormCopier merge throws a contentless
+            // "Unknown PdfException" on catalog PDFs with AcroForms. The cpdf rewrite previously
+            // existed only in JobWorker.DocumentConvertor, which this method never called.
+            JobWorker.DocumentConvertor oMergeConvertor = new JobWorker.DocumentConvertor();
+            if (!oMergeConvertor.AddPagesToPDF(nPageNumber, sPDFFileName, sNewPDFFile, bAddafter))
                 throw new Exception("AddPagesToPDF failed merging '" + sFileToAdd + "' into " + oDocument.PDFFileName);
             try { File.Delete(sNewPDFFile); } catch { }
             UpdateProgress(oaddpagesinput.Job, 35);   // pages merged into PDF
@@ -639,7 +649,12 @@ namespace JobWorker.Jobs
                 {
                     arrVersions.Add(jpageversion.Value);
                     JValue jpageversionNext = (JValue)pagetokenindocnext["@attributes"]["version"];
-                    jpageversion.Value = string.Format("{0}", System.Convert.ToInt32(jpageversionNext.Value) + 1);
+                    // version strings are not always Int32 (older docs carry tick-derived or
+                    // empty values) — Convert.ToInt32 threw and failed the whole job. Bump when
+                    // numeric, otherwise restamp tick-based like the old processor.
+                    jpageversion.Value = long.TryParse(System.Convert.ToString(jpageversionNext.Value), out long nVer)
+                        ? (nVer + 1).ToString()
+                        : (DateTime.Now.Ticks % int.MaxValue).ToString();
                 }
 
             }
@@ -693,10 +708,10 @@ namespace JobWorker.Jobs
 
                 new_page["@attributes"] = new JObject();
                 new_page["@attributes"]["id"] = Guid.NewGuid().ToString();
-                if (arrVersions.Count > i)
+                // same non-numeric-version tolerance as the shift loop above
+                if (arrVersions.Count > i && long.TryParse(System.Convert.ToString(arrVersions[i]), out long nPrevVer))
                 {
-                    int nNextVersion = System.Convert.ToInt32(arrVersions[i]) + 1;
-                    new_page["@attributes"]["version"] = arrVersions.Count > i ? nNextVersion.ToString() : "1"; //Need to check
+                    new_page["@attributes"]["version"] = (nPrevVer + 1).ToString();
                 }
                 else
                 {

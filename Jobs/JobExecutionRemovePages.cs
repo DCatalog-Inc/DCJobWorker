@@ -41,18 +41,19 @@ namespace JobWorker.Jobs
         {
             await using var context = await _dbFactory.CreateDbContextAsync(ct);
             _log.LogInformation("JobExecutionRemovePages job {JobId}", oJob.Id);
+            // oJob is tracked by the CALLER's context — attaching it here conflicts with the
+            // same job row our Include query tracks. Write through jobRow; mirror onto oJob.
+            job jobRow = null;
             try
             {
                 var input = await context.deletepagesinput
                     .Include(r => r.Job)
                     .Where(r => r.Job.Id == oJob.Id)
                     .FirstOrDefaultAsync(ct);
+                jobRow = input?.Job ?? await context.job.FirstOrDefaultAsync(j => j.Id == oJob.Id, ct);
                 if (input == null)
                 {
-                    oJob.Status = Constants.JobProcessingStatus.Failed.ToString();
-                    oJob.Desctiption = "No deletepagesinput for job";
-                    context.Update(oJob);
-                    await context.SaveChangesAsync(ct);
+                    await FailAsync(context, jobRow, oJob, "No deletepagesinput for job", ct);
                     return false;
                 }
 
@@ -62,10 +63,7 @@ namespace JobWorker.Jobs
                 bool ok = mgr.DelPage(input.Id);
                 if (!ok)
                 {
-                    oJob.Status = Constants.JobProcessingStatus.Failed.ToString();
-                    oJob.Desctiption = "Remove pages failed (see worker logs)";
-                    context.Update(oJob);
-                    await context.SaveChangesAsync(ct);
+                    await FailAsync(context, jobRow, oJob, "Remove pages failed (see worker logs)", ct);
                     return false;
                 }
                 return true;
@@ -73,10 +71,29 @@ namespace JobWorker.Jobs
             catch (Exception e)
             {
                 _log.LogError(e, "RemovePages failed for job {JobId}", oJob.Id);
-                oJob.Status = Constants.JobProcessingStatus.Failed.ToString();
-                oJob.Desctiption = "Remove pages failed: " + e.Message;
-                try { context.Update(oJob); await context.SaveChangesAsync(ct); } catch { }
+                try
+                {
+                    jobRow ??= await context.job.FirstOrDefaultAsync(j => j.Id == oJob.Id, ct);
+                    await FailAsync(context, jobRow, oJob, "Remove pages failed: " + e.Message, ct);
+                }
+                catch { /* JobProcessor marks the job Failed via its own context */ }
                 return false;
+            }
+        }
+
+        // Persists Failed on OUR tracked job row, then mirrors onto the caller's instance so
+        // JobProcessor keeps the detailed message instead of overwriting with a generic one.
+        private static async Task FailAsync(ApplicationDbContext context, job jobRow, job oJob,
+            string reason, CancellationToken ct)
+        {
+            if (reason.Length > 512) reason = reason.Substring(0, 512);
+            if (jobRow != null)
+            {
+                jobRow.Status = Constants.JobProcessingStatus.Failed.ToString();
+                jobRow.Desctiption = reason;
+                await context.SaveChangesAsync(ct);
+                oJob.Status = jobRow.Status;
+                oJob.Desctiption = jobRow.Desctiption;
             }
         }
     }

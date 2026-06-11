@@ -58,6 +58,10 @@ namespace JobWorker
         {
             if (_PDFDoc != null)
             {
+                // Close() is required to release the PdfReader's underlying FileStream;
+                // nulling alone leaves the PDF locked until GC, so File.Delete/Move on it
+                // fails with "file in use".
+                try { _PDFDoc.Close(); } catch { }
                 _PDFDoc = null;
             }
         }
@@ -670,7 +674,7 @@ namespace JobWorker
                 output_path += "\\";
 
             String command = string.Format("convert -O resolution={0} -o \"{1}{2}{3}{4}.jpg\" \"{5}\" {6}", oCreateImagesInput.Resolution, output_path, oCreateImagesInput.Prefix, nTargetPage, "%s", _InputFileName, nPageNumber);
-            ProcessStartInfo cmdsi = new ProcessStartInfo("dcmutool.exe");
+            ProcessStartInfo cmdsi = new ProcessStartInfo(System.IO.Path.Combine(AppContext.BaseDirectory, "Tools", "dcmutool", "dcmutool.exe"));
             cmdsi.Arguments = command;
             Process cmd = Process.Start(cmdsi);
             cmd.WaitForExit();
@@ -692,7 +696,7 @@ namespace JobWorker
                 output_path += "\\";
 
             String command = string.Format("convert -O resolution={0} -o \"{1}{2}{3}{4}.jpg\" \"{5}\" {6}", oCreateImagesInput.Resolution, output_path, oCreateImagesInput.Prefix, nTargetPage, "%s", _InputFileName, nTargetPage);
-            ProcessStartInfo cmdsi = new ProcessStartInfo("dcmutool.exe");
+            ProcessStartInfo cmdsi = new ProcessStartInfo(System.IO.Path.Combine(AppContext.BaseDirectory, "Tools", "dcmutool", "dcmutool.exe"));
             cmdsi.Arguments = command;
             Process cmd = Process.Start(cmdsi);
             cmd.WaitForExit();
@@ -1427,7 +1431,7 @@ namespace JobWorker
                 output_path += "\\";
 
             String command = string.Format("convert -O resolution={0} -o \"{1}{2}{3}{4}.jpg\" \"{5}\" {6}", oCreateImagesInput.Resolution, output_path, oCreateImagesInput.Prefix, nTargetPage, "%s", _InputFileName, nTargetPage);
-            ProcessStartInfo cmdsi = new ProcessStartInfo("dcmutool.exe");
+            ProcessStartInfo cmdsi = new ProcessStartInfo(System.IO.Path.Combine(AppContext.BaseDirectory, "Tools", "dcmutool", "dcmutool.exe"));
             cmdsi.Arguments = command;
             Process cmd = Process.Start(cmdsi);
             cmd.WaitForExit();
@@ -1657,8 +1661,7 @@ namespace JobWorker
                 }
 
                 // Replace original PDF
-                System.IO.File.Delete(existingPdfPath);
-                System.IO.File.Move(tempOutput, existingPdfPath);
+                System.IO.File.Move(tempOutput, existingPdfPath, true);
             }
             catch (Exception ex)
             {
