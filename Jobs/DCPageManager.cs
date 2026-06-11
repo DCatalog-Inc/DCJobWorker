@@ -98,7 +98,6 @@ namespace JobWorker.Jobs
             document oDocument = null;
             string sSourceBucket = Constants.DEFAULT_DOCS_LOCATION;
             var crc32 = new System.IO.Hashing.Crc32();
-            FileStream fs = null;
             uint hash = 0;
             string sNewFileNameUploaded = Guid.NewGuid().ToString() + ".pdf";
             //bool bUsingCopy = false;
@@ -218,18 +217,18 @@ namespace JobWorker.Jobs
                         }
                         catch (Exception)
                         {
-                            //The file is being used 
+                            //The file is being used — work on a copy instead.
                             string sNewFileName = sExistingFile.Replace(".pdf", Guid.NewGuid().ToString() + ".pdf");
                             File.Copy(sExistingFile, sNewFileName, true);
                             sExistingFile = sNewFileName;
                             hash = DCPageManager.GetCrc32(sExistingFile);
                             if (oDocument.crc32 == hash && hash != 0)
                                 CRCMatch = true;
-                            fs.Close();
-                            //bUsingCopy = true;
+                            // (legacy fs.Close() removed — fs was never assigned here; GetCrc32 is
+                            // self-contained, and the null call killed the job on every file lock)
 
                         }
-                        //Check the file CRC32 
+                        //Check the file CRC32
 
                     }
                     if (!CRCMatch)
@@ -360,8 +359,7 @@ namespace JobWorker.Jobs
                             hash = DCPageManager.GetCrc32(sExistingFile);
                             if (oDocument.crc32 == hash)
                                 CRCMatch = true;
-                            fs.Close();
-                            //bUsingCopy = true;
+                            // (legacy fs.Close() removed — fs was never assigned here)
                         }
                         oDocument.crc32 = hash;
                         oDocument.DocumentProgressingPercent = oJob.Progress = 50;
