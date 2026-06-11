@@ -852,176 +852,63 @@ namespace JobWorker
         }
         */
 
+        // The uploaded PDF is a COMPLETE copy of the document: swap in its page nPageNumber.
+        // cpdf-based — the prior iText CopyTo/PdfPageFormCopier path threw a contentless
+        // "Unknown PdfException" on catalog PDFs with AcroForm structures (same failure
+        // AddPagesToPDF hit), and additionally removed pages N..end while inserting only one.
         static public bool replacePageInPDFHD(int nPageNumber, string sExistingPDF, string sPDFToAdd)
         {
             try
             {
-                //In case we are replacing all the pages just copy the file.
+                int nExisting = GetPdfPageCount(sExistingPDF);
+                int nNew = GetPdfPageCount(sPDFToAdd);
+                if (nExisting < 1 || nNew < 1)
+                    return false;
+                if (nPageNumber < 1 || nPageNumber > nExisting || nPageNumber > nNew)
+                    return false;
 
-                //var oCurrentPDF = PdfDocument.FromFile(sExistingPDF);
-                //var oNewPDF = PdfDocument.FromFile(sPDFToAdd);
-                //int nExitingPageCount = oCurrentPDF.PageCount;
-                //int nNumberOfPageInNewPDF = oNewPDF.PageCount;
-                //int nNumberOfPageToReplace = Math.Min(nNumberOfPageInNewPDF, nExitingPageCount - nPageNumber + 1);
-                //if (nNumberOfPageToReplace < 1)
-                //    return false;
-                //if (nNumberOfPageToReplace == nExitingPageCount)
-                //{
-                //    nNumberOfPageToReplace = 1;
-                //    oCurrentPDF.RemovePage(nPageNumber - 1);
-                //}
-                //else
-                //{
-                //    oCurrentPDF.RemovePages(nPageNumber - 1, nPageNumber - 1 + nNumberOfPageToReplace - 1);
-                //}
-                //if (nNumberOfPageInNewPDF > 1)
-                //{
-                //    PdfDocument oSinglePagePDF = oNewPDF.CopyPage(0);
-                //    oCurrentPDF.InsertPdf(oSinglePagePDF, nPageNumber - 1);
-                //    oSinglePagePDF.Dispose();
-                //}
-                //else
-                //{
-                //    oCurrentPDF.InsertPdf(oNewPDF, nPageNumber - 1);
-                //}
-                //oCurrentPDF.SaveAs(sExistingPDF, false);
-
-                //oCurrentPDF.Dispose();
-                //oNewPDF.Dispose();
-
-                //Updated using Itext7
-                string tempFile = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(sExistingPDF), "temp.pdf");
-
-                using (iText.Kernel.Pdf.PdfDocument existingPdf = new iText.Kernel.Pdf.PdfDocument(new PdfReader(sExistingPDF), new PdfWriter(tempFile)))
-                using (iText.Kernel.Pdf.PdfDocument newPdf = new iText.Kernel.Pdf.PdfDocument(new PdfReader(sPDFToAdd)))
-                {
-                    int existingPageCount = existingPdf.GetNumberOfPages();
-                    int newPdfPageCount = newPdf.GetNumberOfPages();
-
-                    int numberOfPagesToReplace = Math.Min(newPdfPageCount, existingPageCount - nPageNumber + 1);
-
-                    if (numberOfPagesToReplace < 1)
-                        return false;
-
-                    // Special handling if replacing all remaining pages
-                    if (numberOfPagesToReplace == existingPageCount)
-                    {
-                        // Remove only the target page
-                        existingPdf.RemovePage(nPageNumber);
-                    }
-                    else
-                    {
-                        // Remove pages one by one in reverse order
-                        int startPage = nPageNumber;
-                        int endPage = nPageNumber + numberOfPagesToReplace - 1;
-                        for (int i = endPage; i >= startPage; i--)
-                        {
-                            existingPdf.RemovePage(i);
-                        }
-                    }
-
-                    var copier = new PdfPageFormCopier();
-
-                    // Insert new pages
-                    if (newPdfPageCount > 1)
-                    {
-                        // If multiple pages, copy first page as single-page PDF and insert
-                        PdfPage singlePage = newPdf.GetPage(1).CopyTo(existingPdf);
-                        existingPdf.AddPage(nPageNumber, singlePage); // insert at index
-                    }
-                    else
-                    {
-                        // Single-page PDF: insert at nPageNumber
-                        PdfPage pageToInsert = newPdf.GetPage(1).CopyTo(existingPdf);
-                        existingPdf.AddPage(nPageNumber, pageToInsert);
-                    }
-                }
-
-                // Replace original PDF
-                File.Delete(sExistingPDF);
-                File.Move(tempFile, sExistingPDF);
+                return ReplacePagesViaCpdf(sExistingPDF, sPDFToAdd, nPageNumber, 1, nExisting,
+                    nPageNumber.ToString());
             }
-            catch (Exception)
+            catch (Exception ex)
             {
-
-                //Logger.log.Error("Error when replacing pages in PDF " + e.Message);
+                Console.WriteLine("replacePageInPDFHD failed: " + ex);
+                return false;
             }
-            return true;
         }
 
+        // The uploaded PDF holds the replacement page(s): existing pages
+        // nPageNumber..nPageNumber+r-1 are replaced with ALL pages of the upload
+        // (r = min(uploaded count, pages remaining from nPageNumber)).
+        // cpdf-based — see replacePageInPDFHD for why iText was dropped.
         static public bool replacePageInPDFEx(int nPageNumber, string sExistingPDF, string sPDFToAdd)
         {
-            //try
-            //{
-            //    //In case we are replacing all the pages just copy the file.
-
-            //    var oCurrentPDF = PdfDocument.FromFile(sExistingPDF);
-            //    var oNewPDF = PdfDocument.FromFile(sPDFToAdd);
-            //    int nExitingPageCount = oCurrentPDF.PageCount;
-            //    int nNumberOfPageToReplace = oNewPDF.PageCount;
-            //    nNumberOfPageToReplace = Math.Min(nNumberOfPageToReplace, nExitingPageCount - nPageNumber + 1);
-            //    if (nNumberOfPageToReplace < 1)
-            //        return false;
-            //    if (nPageNumber == 1 && nNumberOfPageToReplace == nExitingPageCount)
-            //    {
-            //        File.Copy(sPDFToAdd, sExistingPDF, true);
-            //        oCurrentPDF.Dispose();
-            //        oNewPDF.Dispose();
-            //        return true;
-            //    }
-            //    //it is using start index and end index.
-            //    oCurrentPDF.RemovePages(nPageNumber - 1, nPageNumber - 1 + nNumberOfPageToReplace - 1);
-            //    oCurrentPDF.InsertPdf(oNewPDF, nPageNumber - 1);
-            //    oCurrentPDF.SaveAs(sExistingPDF, false);
-            //    oCurrentPDF.Dispose();
-            //    oNewPDF.Dispose();
-            //}
-            //catch (Exception)
-            //{
-
-            //    //Logger.log.Error("Error when replacing pages in PDF " + e.Message);
-            //}
-
-            // Itext7
-            string tempFile = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(sExistingPDF), "temp.pdf");
-
-            using (iText.Kernel.Pdf.PdfDocument existingPdf = new iText.Kernel.Pdf.PdfDocument(new PdfReader(sExistingPDF), new PdfWriter(tempFile)))
-            using (iText.Kernel.Pdf.PdfDocument newPdf = new iText.Kernel.Pdf.PdfDocument(new PdfReader(sPDFToAdd)))
+            try
             {
-                int existingPageCount = existingPdf.GetNumberOfPages();
-                int numberOfPagesToReplace = Math.Min(newPdf.GetNumberOfPages(), existingPageCount - nPageNumber + 1);
+                int nExisting = GetPdfPageCount(sExistingPDF);
+                int nNew = GetPdfPageCount(sPDFToAdd);
+                if (nExisting < 1 || nNew < 1)
+                    return false;
 
+                int numberOfPagesToReplace = Math.Min(nNew, nExisting - nPageNumber + 1);
                 if (numberOfPagesToReplace < 1)
                     return false;
 
                 // Special case: replace entire document
-                if (nPageNumber == 1 && numberOfPagesToReplace == existingPageCount)
+                if (nPageNumber == 1 && numberOfPagesToReplace == nExisting)
                 {
-                    existingPdf.Close();
-                    newPdf.Close();
                     File.Copy(sPDFToAdd, sExistingPDF, true);
                     return true;
                 }
 
-                int startPage = nPageNumber;                        // 1-based
-                int endPage = nPageNumber + numberOfPagesToReplace - 1;
-
-                // Remove pages
-                for (int i = endPage; i >= startPage; i--)
-                {
-                    existingPdf.RemovePage(i);  // RemovePage(int pageNumber) exists
-                }
-
-                // Insert new PDF pages at startPage
-                var copier = new PdfPageFormCopier();
-                newPdf.CopyPagesTo(1, newPdf.GetNumberOfPages(), existingPdf, startPage, copier);
+                return ReplacePagesViaCpdf(sExistingPDF, sPDFToAdd, nPageNumber,
+                    numberOfPagesToReplace, nExisting, null);
             }
-
-            // Replace original PDF with temp file
-            File.Delete(sExistingPDF);
-            File.Move(tempFile, sExistingPDF);
-
-            return true;
+            catch (Exception ex)
+            {
+                Console.WriteLine("replacePageInPDFEx failed: " + ex);
+                return false;
+            }
         }
 
 
@@ -1674,9 +1561,50 @@ namespace JobWorker
             return true;
         }
 
+        // Read-only page count (read-only iText opens are safe — only the form-copier merge failed).
+        private static int GetPdfPageCount(string sPdfPath)
+        {
+            using (var reader = new PdfReader(sPdfPath))
+            using (var doc = new iText.Kernel.Pdf.PdfDocument(reader))
+                return doc.GetNumberOfPages();
+        }
+
+        // Rebuilds sExistingPDF as <existing 1..start-1> <replacement pages> <existing start+count..end>
+        // via cpdf. sNewRange selects which pages of sPDFToAdd go in (null = all pages).
+        // Unique temp name: concurrent jobs on the same document directory must not collide.
+        private static bool ReplacePagesViaCpdf(string sExistingPDF, string sPDFToAdd,
+            int nStartPage, int nReplaceCount, int nExistingPageCount, string sNewRange)
+        {
+            string dir = System.IO.Path.GetDirectoryName(sExistingPDF);
+            string tempOutput = System.IO.Path.Combine(dir,
+                "temp_replace_" + Guid.NewGuid().ToString("N") + ".pdf");
+
+            int endPage = nStartPage + nReplaceCount - 1;
+            if (endPage > nExistingPageCount) endPage = nExistingPageCount;
+
+            var cpdfArgs = new System.Text.StringBuilder();
+            if (nStartPage > 1)
+                cpdfArgs.Append("\"" + sExistingPDF + "\" 1-" + (nStartPage - 1) + " ");
+            cpdfArgs.Append("\"" + sPDFToAdd + "\" " + (sNewRange == null ? "" : sNewRange + " "));
+            if (endPage < nExistingPageCount)
+                cpdfArgs.Append("\"" + sExistingPDF + "\" " + (endPage + 1) + "-end ");
+            cpdfArgs.Append("-o \"" + tempOutput + "\"");
+
+            if (!RunCpdf(cpdfArgs.ToString()))
+                return false;
+            if (!System.IO.File.Exists(tempOutput))
+            {
+                Console.WriteLine("cpdf replace produced no output file: " + tempOutput);
+                return false;
+            }
+
+            System.IO.File.Move(tempOutput, sExistingPDF, true);
+            return true;
+        }
+
         // Runs the bundled cpdf.exe (resolved the same way PDFExtractPagesCPDF does: next to the worker
         // exe, or under Tools\). Returns true only on exit code 0.
-        private bool RunCpdf(string arguments)
+        private static bool RunCpdf(string arguments)
         {
             string[] candidates = {
                 System.IO.Path.Combine(AppContext.BaseDirectory, "cpdf.exe"),

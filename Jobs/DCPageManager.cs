@@ -269,13 +269,15 @@ namespace JobWorker.Jobs
                     //if ((oDocument.Publication.Publisher.ConvertSettings.CompressPDFOptions &(int)Constants.GeneralConverFlags.REPLACEONLYSELECTEDPAGE) >1)
                     if (bUploadedCompletePDF)
                     {
-                        DocumentConvertor.replacePageInPDFHD(oReplacePageInput.pagenumber, sExistingFile, sNewFileNameUploaded);
+                        if (!DocumentConvertor.replacePageInPDFHD(oReplacePageInput.pagenumber, sExistingFile, sNewFileNameUploaded))
+                            throw new Exception("Replacing page " + oReplacePageInput.pagenumber + " in the PDF failed (cpdf/HD path) — see worker log");
                         nNumberOfPagesToReplace = 1;
                     }
                     else
                     {
                         nNumberOfPagesToReplace = nNumberOfPagesUploaded;
-                        DocumentConvertor.replacePageInPDFEx(oReplacePageInput.pagenumber, sExistingFile, sNewFileNameUploaded);
+                        if (!DocumentConvertor.replacePageInPDFEx(oReplacePageInput.pagenumber, sExistingFile, sNewFileNameUploaded))
+                            throw new Exception("Replacing page " + oReplacePageInput.pagenumber + " in the PDF failed (cpdf) — see worker log");
                     }
                     //End new code.
                     //Also generate the thumbnails
