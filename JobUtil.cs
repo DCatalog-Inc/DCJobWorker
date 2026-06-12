@@ -30,7 +30,9 @@ public sealed class JobUtil
             ["FreeTrialJob"]                    = typeof(FreeTrialJobWorker),
             ["JobAddToAILibrary"]               = typeof(AddToAILibraryJobWorker),
             ["JobExecutionSavePageLabels"]      = typeof(GeneratePDFJobWorker),
-            ["JobExecutionCreateDownloadAllPDF"]= typeof(HDUpdateDownloadPDFJobWorker),
+            // JobExecutionCreateDownloadAllPDF: HDUpdateDownloadPDFJobWorker was a TODO stub
+            // that marked jobs Completed without generating anything — unmapped so the job
+            // forwards to the legacy DocProcessor until the merge logic is actually ported.
             ["JobExecutionGenerateGifFlipbook"] = typeof(JobExecutionGenerateGifFlipbookWorker),
             ["JobExecutionRecognizeLinks"]      = typeof(JobExecutionRecognizeLinks),
             ["JobExecutionSaveLinksToPDF"]      = typeof(JobExecutionSaveLinksToPDF),

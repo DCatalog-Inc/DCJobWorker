@@ -142,7 +142,7 @@ var builder = Host.CreateDefaultBuilder(args)
         services.AddTransient<FreeTrialJobWorker>();
         services.AddTransient<AddToAILibraryJobWorker>();
         services.AddTransient<GeneratePDFJobWorker>();
-        services.AddTransient<HDUpdateDownloadPDFJobWorker>();
+
         services.AddTransient<JobExecutionGenerateGifFlipbookWorker>();
 
         // Product import handlers
