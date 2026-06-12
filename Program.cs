@@ -130,8 +130,8 @@ var builder = Host.CreateDefaultBuilder(args)
 
         // Core job handlers (original)
         services.AddTransient<JobExecutionConvertPDF>();
-        services.AddTransient<ReplacePagesJob>();
         services.AddTransient<JobExecutionSaveLinksToCSV>();
+        services.AddTransient<JobExecutionIntroPageWorker>();
 
         // Document management handlers
         services.AddTransient<ActivatePagesJobWorker>();

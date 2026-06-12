@@ -15,11 +15,13 @@ public sealed class JobUtil
         {
             // Original handlers
             ["JobExecutionConvertPDF"]          = typeof(JobExecutionConvertPDF),
-            ["ReplacePages"]                    = typeof(ReplacePagesJob),
+            // NOTE: the old ["ReplacePages"] mapping pointed at a do-nothing stub that
+            // marked jobs Completed — removed; unknown types now forward to legacy.
             ["JobExecutionSaveLinksToCSV"]      = typeof(JobExecutionSaveLinksToCSV),
 
             // Document management
             ["JobExecutionReplacePage"]         = typeof(JobExecutionReplacePage),
+            ["JobExecutionIntroPage"]           = typeof(JobExecutionIntroPageWorker),
             ["ActivateEditionsJob"]             = typeof(ActivateEditionsJobWorker),
             ["JobHtmlGenerate"]                 = typeof(HtmlGenerateJobWorker),
             ["ValidateIndexDocumentJob"]        = typeof(ValidateIndexDocumentJobWorker),
