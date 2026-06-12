@@ -131,8 +131,24 @@ namespace JobWorker.Jobs
             doc.InsertBefore(decl, doc.DocumentElement);
             doc.AppendChild(root);
 
-            Append(doc, root, "inputfile", input.InputFileName);
-            Append(doc, root, "outputdir", input.OutputDirectory);
+            // input.InputFileName/OutputDirectory carry the ADMIN's repository layout
+            // (getDocumentPathDB → D:\DCatalog\Docs, the legacy DocProcessor disk) — the
+            // same dcproxy exit -1 failure as RecognizeLinks. Localize to this worker's
+            // paths, which is also where downloadFiles stages the document.
+            string sLocalInputFile = "";
+            string sLocalOutputDir;
+            if (input.Document != null)
+            {
+                sLocalOutputDir = DocumentUtilBase.getDocumentPath(input.Document);
+                if (!string.IsNullOrEmpty(input.Document.PDFFileName))
+                    sLocalInputFile = Path.Combine(sLocalOutputDir, input.Document.PDFFileName);
+            }
+            else
+            {
+                sLocalOutputDir = core.Common.PublicationUtil.getPublicationPath(input.Publication);
+            }
+            Append(doc, root, "inputfile", sLocalInputFile);
+            Append(doc, root, "outputdir", sLocalOutputDir);
             if (input.Document != null)
                 Append(doc, root, "docid", input.Document.Id.ToString());
             Append(doc, root, "importproductstodb", input.importproductstodb ? "1" : "0");
