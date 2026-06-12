@@ -18,6 +18,13 @@ New-Item -ItemType Directory -Force -Path "$dest\logs" | Out-Null
 # leftover self-contained runtime files mixing with a framework-dependent build.
 # Tools\ and logs\ live only in $dest (not in staging) and are protected from /PURGE.
 robocopy $staging $dest /E /IS /IT /COPYALL /PURGE /XD "$dest\Tools" "$dest\logs" /NFL /NDL /NJH /NJS
+
+# Targeted tool updates: Tools\ as a whole is preserved on the box (large PDFTron/dcmutool
+# deps are not in the bundle), but any tool binaries the bundle DOES ship override the box
+# copy — no /PURGE here so box-only dependencies survive.
+if (Test-Path "$staging\Tools") {
+    robocopy "$staging\Tools" "$dest\Tools" /E /IS /IT /NFL /NDL /NJH /NJS
+}
 Remove-Item $staging -Recurse -Force -ErrorAction SilentlyContinue
 
 # Install and configure the service
