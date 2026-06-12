@@ -133,12 +133,14 @@ namespace JobWorker.Jobs
                     int nImageQuality = 85;
                     int nResolution = System.Convert.ToInt32(Math.Floor(oDocument.NormalPageResolution));
                     int w, h;
+                    // createImageReplace renders PAGE 1 of the upload and names the output for
+                    // page 0 — createImageEx renders the TARGET page number, and page 0 doesn't
+                    // exist in the uploaded PDF (the first native run died on the missing jpg).
+                    // It also regenerates Thumbnail_0.jpg from the rendered image itself.
                     var inNormal = oDocumentConvertor.createImageInput(nResolution, -1, -1, sLocalUpload, sDocumentPath, "Page_", nImageQuality, jobRow, "Creating Normal Pages");
-                    oDocumentConvertor.createImageEx(inNormal, 1, 0, out w, out h);
-                    var inThumb = oDocumentConvertor.createImageInput(72, 150, -1, sLocalUpload, sDocumentPath, "Thumbnail_", nImageQuality, jobRow, "Creating Thumbnails");
-                    oDocumentConvertor.createImageEx(inThumb, 1, 0, out w, out h);
+                    oDocumentConvertor.createImageReplace(inNormal, 1, 0, out w, out h);
                     var inHi = oDocumentConvertor.createImageInput(System.Convert.ToInt32(oDocument.HiPageResolution), -1, -1, sLocalUpload, sDocumentPath, "ZPage_", nImageQuality, jobRow, "Creating High Resolution Images");
-                    oDocumentConvertor.createImageEx(inHi, 1, 0, out nWidth, out nHeight);
+                    oDocumentConvertor.createImageReplace(inHi, 1, 0, out nWidth, out nHeight);
                     oDocumentConvertor.release();
                 }
 
