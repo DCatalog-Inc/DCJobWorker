@@ -107,6 +107,13 @@ namespace JobWorker.Jobs
             sKeyPrefix = string.Format("{0}/{1}/{2}", sPublisherName, sPublicationName, oDocument.Id);
             sDocumentPath = DocumentUtilBase.getDocumentPath(oDocument);
 
+            // The job XML is built by the ADMIN with ITS repository layout (getDocumentPathDB →
+            // D:\DCatalog\Docs, the legacy DocProcessor disk). dcproxy reads inputfile/outputdir
+            // from that XML, so on this box it was told to open a drive that doesn't exist and
+            // exited -1. Rewrite both to the worker-local document path before handing it over.
+            LocalizeJobXmlPaths(oJobXML, sDocumentPath, oDocument.PDFFileName);
+            oJobXML.Save(sLocalJobFile);
+
             if (Directory.Exists(sDocumentPath))
             {
                 try { Directory.Delete(sDocumentPath, true); }
@@ -239,6 +246,18 @@ namespace JobWorker.Jobs
         // Runs the recognizer against the document files that are ALREADY on local disk
         // (called inline by JobExecutionConvertPDF right after a convert — no S3 download/upload
         // here, the convert flow owns that). Only fetches the job-definition xml + runs dcproxy.
+        // Rewrites the admin-generated job XML's inputfile/outputdir to this worker's local
+        // document path (the admin writes its own RepositoryLocationDB layout into them).
+        private static void LocalizeJobXmlPaths(XmlDocument oJobXML, string sLocalDocPath, string sPdfFileName)
+        {
+            XmlNode oInputFile = oJobXML.SelectSingleNode("//inputfile");
+            if (oInputFile != null && !string.IsNullOrEmpty(sPdfFileName))
+                oInputFile.InnerText = Path.Combine(sLocalDocPath, sPdfFileName);
+            XmlNode oOutputDir = oJobXML.SelectSingleNode("//outputdir");
+            if (oOutputDir != null)
+                oOutputDir.InnerText = sLocalDocPath;
+        }
+
         public void recognizeLinksFromLocal(recognizelinksinput oRecognizeLinksInput)
         {
             try
@@ -247,6 +266,29 @@ namespace JobWorker.Jobs
                 string sTempPath = _context.serversettings.FirstOrDefault(x => x.Name == "TempPath").Value;
                 string sLocalJobFile = Path.Combine(sTempPath, Guid.NewGuid().ToString() + ".xml");
                 oDCS3Services.downloadFileByURL(oRecognizeLinksInput.RecognizeLinkXml, sLocalJobFile);
+
+                // Same admin-path localization as downloadFiles — the XML carries the legacy
+                // D:\ layout that doesn't exist on this box.
+                try
+                {
+                    XmlDocument oJobXML = new XmlDocument();
+                    oJobXML.Load(sLocalJobFile);
+                    string sDocId = oJobXML.SelectSingleNode("//docid")?.InnerText;
+                    var oDoc = _context.document
+                        .Include(d => d.Publication)
+                        .Include(d => d.Publication.Publisher)
+                        .Where(d => d.Id == sDocId)
+                        .SingleOrDefault();
+                    if (oDoc != null)
+                    {
+                        LocalizeJobXmlPaths(oJobXML, DocumentUtilBase.getDocumentPath(oDoc), oDoc.PDFFileName);
+                        oJobXML.Save(sLocalJobFile);
+                    }
+                }
+                catch (Exception exLocalize)
+                {
+                    Log.Warning("Job XML path localization skipped: {Msg}", exLocalize.Message);
+                }
 
                 string sProcessName = Path.Combine(AppContext.BaseDirectory, "Tools", "dcproxy", "dcproxy.exe");
                 Process oPDFProcess = new Process();
