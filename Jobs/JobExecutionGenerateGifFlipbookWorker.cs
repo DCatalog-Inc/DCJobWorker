@@ -99,6 +99,13 @@ namespace JobWorker.Jobs
 
                 DownloadFiles(oDocument, numberOfImages, sPrefixName);
 
+                // The creator appends ".gif" itself — normalize so we call it with the base
+                // name and look for the file it actually writes (the old check used the raw
+                // name and reported "not found" even on success).
+                string gifBaseName = !string.IsNullOrEmpty(gifFileName) && gifFileName.EndsWith(".gif", StringComparison.OrdinalIgnoreCase)
+                    ? gifFileName.Substring(0, gifFileName.Length - 4)
+                    : gifFileName;
+
                 GifFlippingBookCreator oGifFlippingBookCreator = new GifFlippingBookCreator();
                 oGifFlippingBookCreator.CreateGifFlippingBook(
                     width,
@@ -111,9 +118,9 @@ namespace JobWorker.Jobs
                     numberOfImages,
                     sDocumentPath,
                     sFlippingBookGif,
-                    gifFileName);
+                    gifBaseName);
 
-                string sOutputFile = Path.Combine(sFlippingBookGif, gifFileName);
+                string sOutputFile = Path.Combine(sFlippingBookGif, gifBaseName + ".gif");
                 if (File.Exists(sOutputFile))
                 {
                     DCS3Services oDCS3Services = new DCS3Services();
@@ -122,11 +129,13 @@ namespace JobWorker.Jobs
                         oDocument.TemplateFolderName,
                         oDocument.Id);
                     oDCS3Services.uploadFile(Constants.DEFAULT_DOCS_LOCATION, sOutputFile, sKeyPrefix);
-                    _log.LogInformation("JobExecutionGenerateGifFlipbookWorker: uploaded GIF {GifFileName} for job {JobId}", gifFileName, oJob.Id);
+                    _log.LogInformation("JobExecutionGenerateGifFlipbookWorker: uploaded GIF {GifFileName} for job {JobId}", gifBaseName + ".gif", oJob.Id);
                 }
                 else
                 {
-                    _log.LogWarning("JobExecutionGenerateGifFlipbookWorker: GIF output file not found at {OutputFile} for job {JobId}", sOutputFile, oJob.Id);
+                    // No GIF = the job did not do its work — fail it visibly instead of
+                    // completing with nothing (the creator used to swallow its errors too).
+                    throw new Exception("GIF flipbook was not produced (expected " + sOutputFile + ")");
                 }
             }
             catch (Exception ex)
