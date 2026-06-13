@@ -53,6 +53,15 @@ public sealed class JobProcessor
                 await Task.Delay(200, ct);
         }
 
+        if (currentjob is null)
+        {
+            // Orphan message (job row never existed or was deleted). Dropping it avoids an
+            // infinite poison-loop — the old code dereferenced currentjob.Status -> NRE ->
+            // message never deleted -> redelivered forever.
+            _log.LogWarning("Job {JobId} not found after retries; dropping message {MsgId}", jobId, msg.MessageId);
+            return true;
+        }
+
         // Only one worker may own a job. SQS standard queues deliver at-least-once, and a long
         // conversion can outlive the visibility window, so two workers can hold the same job.
         // A plain read-check-then-update races (both read Waiting, both run) — that is what let
