@@ -53,16 +53,30 @@ public sealed class JobProcessor
                 await Task.Delay(200, ct);
         }
 
-        // only process Waiting / WaitingInQueue (your logic) :contentReference[oaicite:12]{index=12}
+        // Only one worker may own a job. SQS standard queues deliver at-least-once, and a long
+        // conversion can outlive the visibility window, so two workers can hold the same job.
+        // A plain read-check-then-update races (both read Waiting, both run) — that is what let
+        // two boxes convert the same Jafra catalog into the same folder and collide on the PDF
+        // (File.Delete "used by another process"). Claim atomically: one conditional UPDATE,
+        // trust the affected-row count.
         if (currentjob.Status is not "Waiting" and not "WaitingInQueue")
-            return true;
+            return true; // already claimed/terminal — drop the duplicate message
 
-        // mark Processing (optimistic concurrency)
-        currentjob.Status = Constants.JobProcessingStatus.Processing.ToString();
-        currentjob.Desctiption = "Start Processing";
-        currentjob.ProcessedBy = "DCJobWorker";
-        currentjob.CreationTime = DateTime.Now;
-        await _db.SaveChangesAsync(ct);
+        string workerId = WorkerIdentity.Value;
+        int claimed = await _db.Database.ExecuteSqlRawAsync(
+            "UPDATE job SET Status={0}, Desctiption={1}, ProcessedBy={2}, CreationTime={3} " +
+            "WHERE Id={4} AND Status IN ('Waiting','WaitingInQueue')",
+            new object[] { "Processing", "Start Processing", workerId, DateTime.Now, jobId.ToString() }, ct);
+
+        if (claimed == 0)
+        {
+            // Another worker/thread won the race and already owns this job. Drop the duplicate.
+            _log.LogInformation("Job {JobId} already claimed by another worker — skipping duplicate", jobId);
+            return true;
+        }
+
+        // Reflect the committed claim on the tracked entity the handlers read/save below.
+        await _db.Entry(currentjob).ReloadAsync(ct);
 
         // extend visibility periodically for long jobs
         using var visCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -114,6 +128,15 @@ public sealed class JobProcessor
             visCts.Cancel();
             try { await visLoop; } catch { }
         }
+    }
+
+    // Stable per-process identity. Both prod boxes were cloned from one AMI and share the
+    // Windows hostname (EC2AMAZ-KR2D7R4), so MachineName alone can't tell them apart in the
+    // job row / logs — append a short per-process suffix so each worker is distinguishable.
+    private static class WorkerIdentity
+    {
+        public static readonly string Value =
+            $"DCJobWorker@{Environment.MachineName}#{Guid.NewGuid().ToString("N").Substring(0, 8)}";
     }
 
     private static async Task ExtendVisibilityAsync(IAmazonSQS sqs, string q, string rh, WorkerOptions cfg, CancellationToken ct)
