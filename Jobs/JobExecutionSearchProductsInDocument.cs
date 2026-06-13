@@ -77,9 +77,11 @@ namespace JobWorker.Jobs
                 }
                 else
                 {
-                    try { oPDFProcess.CloseMainWindow(); oPDFProcess.Close(); } catch { }
+                    // Read exit state BEFORE Close() — a closed Process throws
+                    // "No process is associated with this object" and masks the real error.
                     oJob.Status = Constants.JobProcessingStatus.Failed.ToString();
                     oJob.Desctiption = oPDFProcess.HasExited ? "Recognizer exited with code " + oPDFProcess.ExitCode : "Timeout";
+                    try { oPDFProcess.CloseMainWindow(); oPDFProcess.Close(); } catch { }
                 }
 
                 _context.Update(oJob);
@@ -140,6 +142,16 @@ namespace JobWorker.Jobs
             string sDocumentPath = DocumentUtilBase.getDocumentPath(oDocument);
             if (!Directory.Exists(sDocumentPath))
                 Directory.CreateDirectory(sDocumentPath);
+
+            // dcproxy opens the actual PDF (getPDFFullPath) to scan for product text —
+            // without it the recognizer dies with "cannot open ...pdf".
+            string sPDFKeyName = string.Format("{0}/{1}", sKeyPrefix, oDocument.PDFFileName);
+            string sPDFFullFileName = Path.Combine(sDocumentPath, oDocument.PDFFileName);
+            if (!File.Exists(sPDFFullFileName))
+            {
+                try { oDCS3Services.downloadFile(sBucketName, sPDFKeyName, sPDFFullFileName); }
+                catch (Exception ex) { Log.Warning("PDF download skipped {Key}: {Msg}", sPDFKeyName, ex.Message); }
+            }
 
             for (int i = 1; i <= oDocument.NumberOfPages; i++)
             {
