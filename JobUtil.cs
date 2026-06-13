@@ -36,11 +36,8 @@ public sealed class JobUtil
             ["JobExecutionGenerateGifFlipbook"] = typeof(JobExecutionGenerateGifFlipbookWorker),
             ["JobExecutionRecognizeLinks"]      = typeof(JobExecutionRecognizeLinks),
             ["JobExecutionSaveLinksToPDF"]      = typeof(JobExecutionSaveLinksToPDF),
-            // SearchProducts (doc + publication): dcproxy's SearchProductsInDocument mode
-            // crashes with an access violation (0xC0000005) on this box — forwarded to the
-            // legacy DocProcessor until the native tool is debugged. (2026-06-12)
-            //["JobExecutionSearchProductsInPublication"] = typeof(JobExecutionSearchProductsInPublication),
-            //["JobSearchProductsInDocument"]     = typeof(JobExecutionSearchProductsInDocument),
+            ["JobExecutionSearchProductsInPublication"] = typeof(JobExecutionSearchProductsInPublication),
+            ["JobSearchProductsInDocument"]     = typeof(JobExecutionSearchProductsInDocument),
             ["JobExecutionAddPages"]            = typeof(JobExecutionAddPages),
             ["JobExecutionRemovePages"]         = typeof(JobExecutionRemovePages),
             ["JobExecutionImportCSV"]           = typeof(JobExecutionImportCSV),
