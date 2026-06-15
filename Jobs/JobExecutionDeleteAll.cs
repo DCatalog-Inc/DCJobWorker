@@ -118,17 +118,34 @@ namespace JobWorker.Jobs
 
         private void deleteItems(deleteitemsinput input)
         {
-            // legacy JSON link "type" codes per item kind
-            var linkSubTypes = new (int jsonType, int subTypeBit)[]
+            // In Page_N.json a link's type lives at link["@attributes"]["type"] (a string "0".."7").
+            // The legacy JSONPath filter $..link[?(@..type=='X')] does NOT match under this worker's
+            // Newtonsoft (the recursive @..type filter yields nothing) — that's why DeleteAll
+            // completed but removed nothing. Iterate the link array directly instead.
+            var subTypeToJsonType = new (int subTypeBit, string jsonType)[]
             {
-                (0, (int)Constants.DeleteItemType.DeleteItemTypeExternalLinks),
-                (1, (int)Constants.DeleteItemType.DeleteItemTypeEmailLinks),
-                (2, (int)Constants.DeleteItemType.DeleteItemTypeGotoPage),
-                (3, (int)Constants.DeleteItemType.DeleteItemTypeVideoPopup),
-                (4, (int)Constants.DeleteItemType.DeleteItemTypeImagePopup),
-                (5, (int)Constants.DeleteItemType.DeleteItemTypeHtmlPopup),
-                (6, (int)Constants.DeleteItemType.DeleteItemTypePhone),
+                ((int)Constants.DeleteItemType.DeleteItemTypeExternalLinks, "0"),
+                ((int)Constants.DeleteItemType.DeleteItemTypeEmailLinks,    "1"),
+                ((int)Constants.DeleteItemType.DeleteItemTypeGotoPage,      "2"),
+                ((int)Constants.DeleteItemType.DeleteItemTypeVideoPopup,    "3"),
+                ((int)Constants.DeleteItemType.DeleteItemTypeImagePopup,    "4"),
+                ((int)Constants.DeleteItemType.DeleteItemTypeHtmlPopup,     "5"),
+                ((int)Constants.DeleteItemType.DeleteItemTypePhone,         "6"),
             };
+
+            HashSet<string> targetTypes = new HashSet<string>();
+            if (input.itemtype == 1) // Links
+            {
+                foreach (var (subTypeBit, jsonType) in subTypeToJsonType)
+                    if (input.itemsubtype == 0 || (input.itemsubtype & subTypeBit) > 0)
+                        targetTypes.Add(jsonType);
+            }
+            if ((input.itemtype & (int)Constants.DeleteItemType.DeleteItemTypeProduct) > 0)
+                targetTypes.Add("7"); // products are links with type 7
+
+            bool clearVideo = (input.itemtype & (int)Constants.DeleteItemType.DeleteItemTypeVideo) > 0;
+            bool clearAudio = (input.itemtype & (int)Constants.DeleteItemType.DeleteItemTypeAudio) > 0;
+            bool clearImage = (input.itemtype & (int)Constants.DeleteItemType.DeleteItemTypeImage) > 0;
 
             for (int i = nFromPage; i <= nToPage; i++)
             {
@@ -137,71 +154,64 @@ namespace JobWorker.Jobs
                     continue;
 
                 JObject pageJson = JObject.Parse(File.ReadAllText(sFullFileName));
-                List<JToken> removeList = new List<JToken>();
                 bool bDirty = false;
 
-                if (input.itemtype == 1) // Links
+                if (targetTypes.Count > 0)
                 {
-                    foreach (var (jsonType, subTypeBit) in linkSubTypes)
+                    foreach (JToken linkArrTok in pageJson.SelectTokens("$..links.link").ToList())
                     {
-                        if (input.itemsubtype == 0 || (input.itemsubtype & subTypeBit) > 0)
-                            collectMatchingLinks(pageJson, jsonType, input, removeList, ref bDirty, i);
+                        JArray linkArr = linkArrTok as JArray;
+                        if (linkArr == null)
+                            continue;
+                        foreach (JToken link in linkArr.ToList()) // snapshot so we can Remove()
+                        {
+                            JToken attr = link["@attributes"];
+                            if (attr == null)
+                                continue;
+                            string type = attr["type"]?.ToString();
+                            if (type == null || !targetTypes.Contains(type))
+                                continue;
+                            bool coordEmpty = isNullOrEmpty(attr["coordinates"]);
+                            if (input.itemshape == 1 && !coordEmpty)   // 1 = rect (has coordinates)
+                                continue;
+                            if (input.itemshape == 2 && coordEmpty)     // 2 = polygon (no coordinates)
+                                continue;
+                            string linkId = attr["link_id"]?.ToString() ?? "";
+                            bool isNumberId = Regex.IsMatch(linkId, @"^\d+$");
+                            if (input.itemcreationtype == 1 && !isNumberId)   // 1 = manual
+                                continue;
+                            if (input.itemcreationtype == 2 && isNumberId)    // 2 = automatic
+                                continue;
+                            link.Remove();
+                            bDirty = true;
+                        }
                     }
                 }
 
-                if ((input.itemtype & (int)Constants.DeleteItemType.DeleteItemTypeProduct) > 0)
-                    collectMatchingLinks(pageJson, 7, input, removeList, ref bDirty, i);
+                if (clearVideo) bDirty |= clearMediaArray(pageJson, "$..links.video");
+                if (clearAudio) bDirty |= clearMediaArray(pageJson, "$..links.audio");
+                if (clearImage) bDirty |= clearMediaArray(pageJson, "$..links.image");
 
-                if ((input.itemtype & (int)Constants.DeleteItemType.DeleteItemTypeVideo) > 0)
-                    clearMediaArray(pageJson, "..links.video", ref bDirty, i);
-                if ((input.itemtype & (int)Constants.DeleteItemType.DeleteItemTypeAudio) > 0)
-                    clearMediaArray(pageJson, "..links.audio", ref bDirty, i);
-                if ((input.itemtype & (int)Constants.DeleteItemType.DeleteItemTypeImage) > 0)
-                    clearMediaArray(pageJson, "..links.image", ref bDirty, i);
-
-                foreach (JToken el in removeList)
-                    el.Remove();
                 if (bDirty)
+                {
+                    if (i - 1 < arrdirty.Length) arrdirty[i - 1] = true;
                     File.WriteAllText(sFullFileName, pageJson.ToString());
+                }
             }
         }
 
-        private void collectMatchingLinks(JObject pageJson, int jsonType, deleteitemsinput input,
-            List<JToken> removeList, ref bool bDirty, int pageIndex)
+        private static bool clearMediaArray(JObject pageJson, string path)
         {
-            string selectsequence = "$..link[?(@..type=='" + jsonType + "')]";
-            IEnumerable<JToken> jLinks = pageJson.SelectTokens(selectsequence);
-            foreach (JToken item in jLinks)
+            bool any = false;
+            foreach (JToken tok in pageJson.SelectTokens(path).ToList())
             {
-                JToken attrItem = item["@attributes"];
-                if (attrItem == null)
-                    continue;
-                bool coordEmpty = isNullOrEmpty(attrItem["coordinates"]);
-                if (input.itemshape == 1 && !coordEmpty)   // 1 = rect (has coordinates)
-                    continue;
-                if (input.itemshape == 2 && coordEmpty)     // 2 = polygon (no coordinates)
-                    continue;
-                string linkId = attrItem["link_id"]?.Value<string>() ?? "";
-                bool isNumberId = Regex.IsMatch(linkId, @"^\d+$");
-                if (input.itemcreationtype == 1 && !isNumberId)   // 1 = manual (numeric id)
-                    continue;
-                if (input.itemcreationtype == 2 && isNumberId)    // 2 = automatic
-                    continue;
-                removeList.Add(item);
-                bDirty = true;
-                if (pageIndex - 1 < arrdirty.Length) arrdirty[pageIndex - 1] = true;
+                if (tok is JArray arr && arr.Count > 0)
+                {
+                    arr.Clear();
+                    any = true;
+                }
             }
-        }
-
-        private void clearMediaArray(JObject pageJson, string path, ref bool bDirty, int pageIndex)
-        {
-            JArray arr = pageJson.SelectToken(path) as JArray;
-            if (arr != null)
-            {
-                arr.Clear();
-                bDirty = true;
-                if (pageIndex - 1 < arrdirty.Length) arrdirty[pageIndex - 1] = true;
-            }
+            return any;
         }
 
         // Mirrors the legacy JsonExtensions.IsNullOrEmpty (not present in the new core).
