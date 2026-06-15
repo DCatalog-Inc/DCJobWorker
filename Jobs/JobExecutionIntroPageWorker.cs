@@ -66,6 +66,15 @@ namespace JobWorker.Jobs
                     return false;
                 }
 
+                // Serialize page-ops on this document across workers (prevents same-doc file-in-use
+                // collisions with concurrent convert/replace/intro operations).
+                await using var docLock = await DocumentLock.AcquireAsync(context, input.Document.Id, 600, ct);
+                if (!docLock.Acquired)
+                {
+                    await FailAsync(context, jobRow, oJob, "Could not acquire document lock (another operation on this document is in progress)", ct);
+                    return false;
+                }
+
                 document oDocument = input.Document;
                 string sDocumentPath = DocumentUtilBase.getDocumentPath(oDocument);
                 if (!Directory.Exists(sDocumentPath))

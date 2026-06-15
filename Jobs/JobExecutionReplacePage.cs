@@ -68,6 +68,16 @@ namespace JobWorker.Jobs
                     return false;
                 }
 
+                // Serialize page-ops on this document across workers. Two jobs touching the same
+                // doc's files concurrently caused "The process cannot access the file ... because it
+                // is being used by another process" (the job-level atomic claim only covers same-JOB).
+                await using var docLock = await DocumentLock.AcquireAsync(context, input.Document.Id, 600, ct);
+                if (!docLock.Acquired)
+                {
+                    await FailAsync(context, jobRow, oJob, "Could not acquire document lock (another operation on this document is in progress)", ct);
+                    return false;
+                }
+
                 var mgr = new DCPageManager(context, _emailSender,
                     NullLogger<ProductImportJob>.Instance, _sqs);
 

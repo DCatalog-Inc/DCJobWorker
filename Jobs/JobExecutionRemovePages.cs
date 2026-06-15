@@ -48,12 +48,22 @@ namespace JobWorker.Jobs
             {
                 var input = await context.deletepagesinput
                     .Include(r => r.Job)
+                    .Include(r => r.Document)
                     .Where(r => r.Job.Id == oJob.Id)
                     .FirstOrDefaultAsync(ct);
                 jobRow = input?.Job ?? await context.job.FirstOrDefaultAsync(j => j.Id == oJob.Id, ct);
-                if (input == null)
+                if (input == null || input.Document == null)
                 {
-                    await FailAsync(context, jobRow, oJob, "No deletepagesinput for job", ct);
+                    await FailAsync(context, jobRow, oJob, "No deletepagesinput/document for job", ct);
+                    return false;
+                }
+
+                // Serialize page-ops on this document across workers (prevents same-doc file-in-use
+                // collisions; the job-level atomic claim only covers same-JOB processing).
+                await using var docLock = await DocumentLock.AcquireAsync(context, input.Document.Id, 600, ct);
+                if (!docLock.Acquired)
+                {
+                    await FailAsync(context, jobRow, oJob, "Could not acquire document lock (another operation on this document is in progress)", ct);
                     return false;
                 }
 
