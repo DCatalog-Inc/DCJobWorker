@@ -52,19 +52,27 @@ namespace JobWorker.Jobs
             Log.Information("JobExecutionImportCSV job {JobId}", oJob.Id);
             try
             {
-                var input = await _context.importcsvinput
-                    .Include(c => c.Job)
-                    .Include(c => c.Document)
-                    .Include(c => c.Document.Publication)
-                    .Include(c => c.Document.Publication.Publisher)
-                    .Include(c => c.Publication)
-                    .Include(c => c.Publication.Publisher)
-                    .Where(c => c.Job.Id == oJob.Id)
-                    .FirstOrDefaultAsync(ct);
+                // The SQS message can arrive before the admin's importcsvinput row is committed/
+                // visible (the same enqueue-before-commit race JobProcessor already retries the job
+                // row for). Retry the lookup briefly instead of failing the job outright.
+                importcsvinput input = null;
+                for (int attempt = 0; attempt < 6 && input == null; attempt++)
+                {
+                    if (attempt > 0) await Task.Delay(500, ct);
+                    input = await _context.importcsvinput
+                        .Include(c => c.Job)
+                        .Include(c => c.Document)
+                        .Include(c => c.Document.Publication)
+                        .Include(c => c.Document.Publication.Publisher)
+                        .Include(c => c.Publication)
+                        .Include(c => c.Publication.Publisher)
+                        .Where(c => c.Job.Id == oJob.Id)
+                        .FirstOrDefaultAsync(ct);
+                }
                 if (input == null)
                 {
                     oJob.Status = Constants.JobProcessingStatus.Failed.ToString();
-                    oJob.Desctiption = "No importcsvinput for job";
+                    oJob.Desctiption = "No importcsvinput for job (input row not found after retries)";
                     _context.Update(oJob);
                     await _context.SaveChangesAsync(ct);
                     return false;
