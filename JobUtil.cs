@@ -41,6 +41,7 @@ public sealed class JobUtil
             ["JobExecutionAddPages"]            = typeof(JobExecutionAddPages),
             ["JobExecutionRemovePages"]         = typeof(JobExecutionRemovePages),
             ["JobExecutionImportCSV"]           = typeof(JobExecutionImportCSV),
+            ["JobExecutionDeleteAll"]           = typeof(JobExecutionDeleteAll),
 
             // Product imports
             ["AdessoJob"]                       = typeof(AdessoJobWorker),
