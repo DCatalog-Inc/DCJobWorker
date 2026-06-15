@@ -17,6 +17,10 @@
     <PackageReference Include="Crc32.NET" Version="1.2.0" />
     <PackageReference Include="IronPdf" Version="2025.9.4" />
     <PackageReference Include="itext" Version="9.3.0" />
+    <!-- iText 9 needs a BouncyCastle ADAPTER (not just the connector) to open encrypted/secured
+         PDFs. Without it, convert throws "bouncy-castle-adapter ... must be added" and the page
+         XML never generates (Georgia-Western edition failures). -->
+    <PackageReference Include="itext.bouncy-castle-adapter" Version="9.3.0" />
     <PackageReference Include="itext.licensing.base" Version="4.2.3" />
     <!-- NOTE: itext.licensing.remote (needed to silence the startup LicenseKeyException
          warning) is incompatible with AWSSDK.Core 4.x (caps AWSSDK < 4.0) — the license
