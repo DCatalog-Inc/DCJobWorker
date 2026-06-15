@@ -31,6 +31,7 @@ public sealed class JobUtil
             ["JobAddToAILibrary"]               = typeof(AddToAILibraryJobWorker),
             ["JobExecutionSavePageLabels"]      = typeof(GeneratePDFJobWorker),
             ["JobExecutionCreateDownloadAllPDF"] = typeof(JobExecutionCreateDownloadAllPDFWorker),
+            ["JobExecutionCreateImages"]        = typeof(JobExecutionCreateImagesWorker),
             ["JobExecutionGenerateGifFlipbook"] = typeof(JobExecutionGenerateGifFlipbookWorker),
             ["JobExecutionRecognizeLinks"]      = typeof(JobExecutionRecognizeLinks),
             ["JobExecutionSaveLinksToPDF"]      = typeof(JobExecutionSaveLinksToPDF),
