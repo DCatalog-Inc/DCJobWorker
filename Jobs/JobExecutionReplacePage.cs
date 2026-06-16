@@ -93,18 +93,14 @@ namespace JobWorker.Jobs
                     return false;
                 }
 
-                // Page swapped — now refresh search. ReplacePages' indexPageInDocument calls
-                // core ElasticSearchEngine.addPage, which is a stub (indexing body commented
-                // out), and nothing uploads the regenerated html/ artifacts SearchHighlight
-                // reads from S3. Finalize like JobExecutionAddPages: regenerate page text
-                // (dcmutool), upload the document dir, then full re-index.
-                document oDocument = input.Document;
-                string sDocumentPath = DocumentUtilBase.getDocumentPath(oDocument);
-                string sPDFFileName = Path.Combine(sDocumentPath, oDocument.PDFFileName);
-                PDF2HTML.convertAllPagesText(sPDFFileName, sDocumentPath, "html");
-                mgr.updateDocument(oDocument);
-                DCJobs.DocumentConvertor.indexDocument(context, oDocument);
-                _log.LogInformation("ReplacePage job {JobId}: re-indexed document {DocId}", oJob.Id, oDocument.Id);
+                // ReplacePages already does everything per-page: swaps the page in the PDF,
+                // regenerates that page's image/SVG/text, re-indexes just that page
+                // (indexPageInDocument), and uploads only the replaced page's artifacts + the PDF +
+                // document.json. A single-page replace must NOT regenerate text for all pages or
+                // re-upload the whole document directory — that full-document finalize is what hung
+                // the worker on large catalogs (e.g. a 1,300-page doc). So we stop here.
+                _log.LogInformation("ReplacePage job {JobId}: page {Page} replaced for document {DocId}",
+                    oJob.Id, input.pagenumber, input.Document.Id);
 
                 return true;
             }
