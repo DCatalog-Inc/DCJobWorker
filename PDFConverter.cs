@@ -623,7 +623,7 @@ namespace JobWorker
             ProcessStartInfo cmdsi = new ProcessStartInfo(exePath);
             cmdsi.Arguments = command;
             Process cmd = Process.Start(cmdsi);
-            cmd.WaitForExit();
+            DCJobs.ProcessUtil.WaitOrKill(cmd);
             int result = cmd.ExitCode;
             if (result != 0)
             {
@@ -677,7 +677,7 @@ namespace JobWorker
             ProcessStartInfo cmdsi = new ProcessStartInfo(System.IO.Path.Combine(AppContext.BaseDirectory, "Tools", "dcmutool", "dcmutool.exe"));
             cmdsi.Arguments = command;
             Process cmd = Process.Start(cmdsi);
-            cmd.WaitForExit();
+            DCJobs.ProcessUtil.WaitOrKill(cmd);
             string sTargetFileName = string.Format("{0}{1}{2}.jpg", output_path, oCreateImagesInput.Prefix, nTargetPage);
             DocumentConvertor.createThumbnails(output_path, sTargetFileName, nTargetPage.ToString());
             using (System.Drawing.Image img = System.Drawing.Image.FromFile(sTargetFileName))
@@ -699,7 +699,7 @@ namespace JobWorker
             ProcessStartInfo cmdsi = new ProcessStartInfo(System.IO.Path.Combine(AppContext.BaseDirectory, "Tools", "dcmutool", "dcmutool.exe"));
             cmdsi.Arguments = command;
             Process cmd = Process.Start(cmdsi);
-            cmd.WaitForExit();
+            DCJobs.ProcessUtil.WaitOrKill(cmd);
             string sTargetFileName = string.Format("{0}{1}{2}.jpg", output_path, oCreateImagesInput.Prefix, nTargetPage);
             DocumentConvertor.createThumbnails(output_path, sTargetFileName, nTargetPage.ToString());
             using (System.Drawing.Image img = System.Drawing.Image.FromFile(sTargetFileName))
@@ -936,7 +936,7 @@ namespace JobWorker
             ProcessStartInfo cmdsi = new ProcessStartInfo("PDFUtils.exe");
             cmdsi.Arguments = command;
             Process cmd = Process.Start(cmdsi);
-            cmd.WaitForExit();
+            DCJobs.ProcessUtil.WaitOrKill(cmd);
             return true;
 
         }
@@ -1321,7 +1321,7 @@ namespace JobWorker
             ProcessStartInfo cmdsi = new ProcessStartInfo(System.IO.Path.Combine(AppContext.BaseDirectory, "Tools", "dcmutool", "dcmutool.exe"));
             cmdsi.Arguments = command;
             Process cmd = Process.Start(cmdsi);
-            cmd.WaitForExit();
+            DCJobs.ProcessUtil.WaitOrKill(cmd);
             string sTargetFileName = string.Format("{0}{1}{2}.jpg", output_path, oCreateImagesInput.Prefix, nTargetPage);
 
 
@@ -1626,7 +1626,7 @@ namespace JobWorker
                 {
                     string err = p.StandardError.ReadToEnd();
                     string outp = p.StandardOutput.ReadToEnd();
-                    p.WaitForExit();
+                    DCJobs.ProcessUtil.WaitOrKill(p);
                     if (p.ExitCode != 0)
                     {
                         Console.WriteLine("cpdf failed (exit " + p.ExitCode + ") exe=" + exe + " args=" + arguments + " err=" + err + " out=" + outp);
@@ -2070,7 +2070,7 @@ namespace JobWorker
 
             string stdout = p.StandardOutput.ReadToEnd();
             string stderr = p.StandardError.ReadToEnd();
-            p.WaitForExit();
+            DCJobs.ProcessUtil.WaitOrKill(p);
 
             // Log these somewhere you can see them:
             File.AppendAllText(@"C:\DCatalog\JobWorker\logs\pdfutils_out.log", stdout);
