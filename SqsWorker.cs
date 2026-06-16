@@ -39,16 +39,22 @@ public sealed class SqsWorker : BackgroundService
         {
             var context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
             DCSQS oDCSQS = new DCSQS(context, _sqs);
-            string sDistributedHPQueueName = await oDCSQS.getDistributedQueueNewUrl();
-            //string sDistributedQueueName = await oDCSQS.getDistributedQueueUrl();
-            //string sDemoQueueName = await oDCSQS.getDemosURL();
-            //string sClientsQueueName = await oDCSQS.getClientsURL();
+            string sProdQueue = await oDCSQS.getDistributedQueueNewUrl();   // Distributed_Jobs_Queue_Prod (primary)
+            // The legacy Windows DocProcessor is decommissioned, so this worker also drains the
+            // physical legacy queues directly (resolved by literal name — the serversettings
+            // entries now point at the Prod queue). Anything still enqueued to legacy by a
+            // not-yet-restarted admin/jobs process gets processed here instead of stranded.
+            string sLegacyQueue = null, sLegacyHPQueue = null;
+            try { sLegacyQueue = await oDCSQS.getURLByName("Distributed_Jobs_Queue"); }
+            catch (Exception ex) { _log.LogWarning(ex, "Could not resolve legacy Distributed_Jobs_Queue"); }
+            try { sLegacyHPQueue = await oDCSQS.getURLByName("Distributed_Jobs_Queue_HP"); }
+            catch (Exception ex) { _log.LogWarning(ex, "Could not resolve legacy Distributed_Jobs_Queue_HP"); }
 
-            string[] order = new string[4];
-            order[0] = sDistributedHPQueueName;
-            //order[1] = sDistributedQueueName;
-            //order[2] = sDemoQueueName;
-            //order[3] = sClientsQueueName;
+            string[] order = new string[3];
+            order[0] = sProdQueue;
+            order[1] = sLegacyQueue;
+            order[2] = sLegacyHPQueue;
+            _log.LogInformation("Polling queues: prod={Prod} legacy={Legacy} legacyHP={HP}", sProdQueue, sLegacyQueue, sLegacyHPQueue);
 
             while (!stoppingToken.IsCancellationRequested)
             {
