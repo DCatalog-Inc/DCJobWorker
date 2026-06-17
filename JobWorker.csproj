@@ -43,6 +43,13 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- cpdf.exe is required by ReplacePage/RemovePage merges (DocumentConvertor.RunCpdf /
+         PDFExtractPagesCPDF resolve it from the app root or Tools\). It was previously absent
+         from the worker, so page-merge failed with "cannot find cpdf.exe". Ship it in the build
+         output (app root) so every publish/deploy includes it and /PURGE can't strip it. -->
+    <None Update="cpdf.exe">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
     <None Update="appspec.yml">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
