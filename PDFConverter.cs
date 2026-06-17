@@ -867,8 +867,16 @@ namespace JobWorker
                 if (nPageNumber < 1 || nPageNumber > nExisting || nPageNumber > nNew)
                     return false;
 
-                return ReplacePagesViaCpdf(sExistingPDF, sPDFToAdd, nPageNumber, 1, nExisting,
-                    nPageNumber.ToString());
+                if (!ReplacePagesViaCpdf(sExistingPDF, sPDFToAdd, nPageNumber, 1, nExisting,
+                        nPageNumber.ToString()))
+                    return false;
+
+                // Fillable catalog: cpdf's split+concat duplicates the document-level /Fields array
+                // (it roughly doubles per replace) until iText can no longer load the form to fill
+                // it. Collapse the duplicates back to one entry per field. See DedupAcroFormFields.
+                if (PdfHasAcroForm(sExistingPDF))
+                    DedupAcroFormFields(sExistingPDF);
+                return true;
             }
             catch (Exception ex)
             {
@@ -901,8 +909,15 @@ namespace JobWorker
                     return true;
                 }
 
-                return ReplacePagesViaCpdf(sExistingPDF, sPDFToAdd, nPageNumber,
-                    numberOfPagesToReplace, nExisting, null);
+                if (!ReplacePagesViaCpdf(sExistingPDF, sPDFToAdd, nPageNumber,
+                        numberOfPagesToReplace, nExisting, null))
+                    return false;
+
+                // Fillable catalog: collapse the /Fields duplicates cpdf's concat produces
+                // (see HD path above and DedupAcroFormFields).
+                if (PdfHasAcroForm(sExistingPDF))
+                    DedupAcroFormFields(sExistingPDF);
+                return true;
             }
             catch (Exception ex)
             {
@@ -1567,6 +1582,87 @@ namespace JobWorker
             using (var reader = new PdfReader(sPdfPath))
             using (var doc = new iText.Kernel.Pdf.PdfDocument(reader))
                 return doc.GetNumberOfPages();
+        }
+
+        // True when the PDF carries a document-level AcroForm with at least one field
+        // (a fillable catalog). Checks the catalog /AcroForm /Fields dictionary DIRECTLY and does
+        // NOT walk the field tree, so it stays safe even on a PDF whose field hierarchy is malformed.
+        private static bool PdfHasAcroForm(string sPDF)
+        {
+            try
+            {
+                using (var reader = new PdfReader(sPDF))
+                using (var doc = new iText.Kernel.Pdf.PdfDocument(reader))
+                {
+                    var acro = doc.GetCatalog().GetPdfObject().GetAsDictionary(PdfName.AcroForm);
+                    var fields = acro?.GetAsArray(PdfName.Fields);
+                    return fields != null && fields.Size() > 0;
+                }
+            }
+            catch { return false; }
+        }
+
+        // Removes duplicate entries from the document-level /AcroForm /Fields array, keeping the
+        // first reference to each distinct field object.
+        //
+        // WHY this is needed: cpdf replaces a page by splitting the document into page ranges and
+        // CONCATENATING them. The AcroForm is a DOCUMENT-LEVEL object, so BOTH split halves carry
+        // the full /Fields array; cpdf's concat appends both -> /Fields roughly DOUBLES on every
+        // replace (2^n growth). After ~7 replaces the Frontier catalog reached 224,252 entries for
+        // only 1,812 distinct fields (128x). iText then chokes building that many field entries when
+        // it loads the form to fill it (PdfAcroForm.GetAcroForm -> PopulateFormFieldsMap -> ...),
+        // throwing/StackOverflowing -- which is uncatchable and crashed the whole viewer process,
+        // so order PDFs stopped generating (Frontier orders stopped 2026-06-15).
+        //
+        // This operates on the RAW /Fields PdfArray by indirect reference and never calls
+        // GetAcroForm, so it does not walk the field tree and is safe to run even on an
+        // already-bloated PDF (it heals it). Returns true if it ran (even when nothing was removed).
+        private static bool DedupAcroFormFields(string sPDF)
+        {
+            string dir = System.IO.Path.GetDirectoryName(sPDF);
+            string tempOutput = System.IO.Path.Combine(dir,
+                "temp_dedupform_" + Guid.NewGuid().ToString("N") + ".pdf");
+            try
+            {
+                int before, after;
+                using (var reader = new PdfReader(sPDF))
+                using (var writer = new PdfWriter(tempOutput))
+                using (var doc = new iText.Kernel.Pdf.PdfDocument(reader, writer))
+                {
+                    var acro = doc.GetCatalog().GetPdfObject().GetAsDictionary(PdfName.AcroForm);
+                    var fields = acro?.GetAsArray(PdfName.Fields);
+                    if (acro == null || fields == null) return false;
+
+                    before = fields.Size();
+                    var seen = new System.Collections.Generic.HashSet<string>();
+                    var keep = new PdfArray();
+                    for (int i = 0; i < fields.Size(); i++)
+                    {
+                        var o = fields.Get(i);
+                        var iref = o.GetIndirectReference();
+                        // Direct (inline) field objects cannot be safely deduped; always keep them.
+                        string key = iref != null
+                            ? iref.GetObjNumber() + "_" + iref.GetGenNumber()
+                            : "direct_" + i;
+                        if (!seen.Add(key)) continue;
+                        keep.Add(o);
+                    }
+                    after = keep.Size();
+                    if (after == before) return true;   // nothing to do
+                    acro.Put(PdfName.Fields, keep);
+                    acro.SetModified();
+                }
+                if (!System.IO.File.Exists(tempOutput)) return false;
+                System.IO.File.Move(tempOutput, sPDF, true);
+                Console.WriteLine("DedupAcroFormFields: /Fields " + before + " -> " + after + " for " + sPDF);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("DedupAcroFormFields failed: " + ex.Message);
+                try { if (System.IO.File.Exists(tempOutput)) System.IO.File.Delete(tempOutput); } catch { }
+                return false;
+            }
         }
 
         // Rebuilds sExistingPDF as <existing 1..start-1> <replacement pages> <existing start+count..end>
