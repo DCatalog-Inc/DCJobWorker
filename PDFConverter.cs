@@ -1720,9 +1720,18 @@ namespace JobWorker
             {
                 using (var p = System.Diagnostics.Process.Start(psi))
                 {
-                    string err = p.StandardError.ReadToEnd();
-                    string outp = p.StandardOutput.ReadToEnd();
+                    // Drain both pipes CONCURRENTLY, then kill on timeout. The old code read
+                    // stderr then stdout with blocking ReadToEnd() BEFORE WaitOrKill, which
+                    // (a) defeats the 30-min kill timeout — the thread blocks in ReadToEnd until
+                    // cpdf exits, so WaitOrKill never runs — and (b) can pipe-deadlock when cpdf
+                    // fills one buffer while we block on the other. On a huge doc (IMNASA, 1678
+                    // pages) the worker thread hung forever holding the document GET_LOCK, piling
+                    // up every later ReplacePage on that doc.
+                    var errTask = p.StandardError.ReadToEndAsync();
+                    var outTask = p.StandardOutput.ReadToEndAsync();
                     DCJobs.ProcessUtil.WaitOrKill(p);
+                    string err = errTask.GetAwaiter().GetResult();
+                    string outp = outTask.GetAwaiter().GetResult();
                     if (p.ExitCode != 0)
                     {
                         Console.WriteLine("cpdf failed (exit " + p.ExitCode + ") exe=" + exe + " args=" + arguments + " err=" + err + " out=" + outp);
@@ -2164,9 +2173,14 @@ namespace JobWorker
 
             using var p = Process.Start(psi);
 
-            string stdout = p.StandardOutput.ReadToEnd();
-            string stderr = p.StandardError.ReadToEnd();
+            // Drain both pipes CONCURRENTLY, then kill on timeout (same fix as RunCpdf): the old
+            // blocking ReadToEnd() before WaitOrKill defeats the 30-min kill timeout and can
+            // pipe-deadlock on a large doc, hanging the worker thread (PDFUtils on a 1678-page doc).
+            var outTask = p.StandardOutput.ReadToEndAsync();
+            var errTask = p.StandardError.ReadToEndAsync();
             DCJobs.ProcessUtil.WaitOrKill(p);
+            string stdout = outTask.GetAwaiter().GetResult();
+            string stderr = errTask.GetAwaiter().GetResult();
 
             // Log these somewhere you can see them:
             File.AppendAllText(@"C:\DCatalog\JobWorker\logs\pdfutils_out.log", stdout);
