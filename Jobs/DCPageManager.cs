@@ -1257,16 +1257,25 @@ namespace JobWorker.Jobs
             int nNumberOfPagesToRemove = nToPage - nPageNumber + 1;
 
             int nPDFPageCount = oDocument.NumberOfPages;
-            PDFExtractPagesCPDF e2 = new PDFExtractPagesCPDF(_logger);
-            string sRange = PDFExtractPagesCPDF.getDeleteCommand(nPageNumber, nNumberOfPagesToRemove, nPDFPageCount);
 
-            e2.PDFSourceFileName = sPDFFileName;
-            e2.Range = sRange;
-            e2.OutputDir = sDocumentPath;
-            //string sFileName = string.Format("Page_{0}.pdf", e2.Range);
-            string outputfile = Path.Combine(e2.OutputDir, oDocument.PDFFileName);
-            e2.PDFTargetFileName = outputfile;
-            bRet = e2.Execute();
+            // PDFTron in-place first: removes the pages without re-extracting the whole document
+            // like the cpdf range-cut below does, so it scales to very large docs and preserves the
+            // AcroForm. cpdf fallback if the tool is unavailable or the in-place remove fails.
+            bRet = JobWorker.DocumentConvertor.RemovePagesViaPdfUtils(sPDFFileName, nPageNumber, nNumberOfPagesToRemove);
+            if (!bRet)
+            {
+                Console.WriteLine("DeletePages: PDFUtils path unavailable/failed, falling back to cpdf");
+                PDFExtractPagesCPDF e2 = new PDFExtractPagesCPDF(_logger);
+                string sRange = PDFExtractPagesCPDF.getDeleteCommand(nPageNumber, nNumberOfPagesToRemove, nPDFPageCount);
+
+                e2.PDFSourceFileName = sPDFFileName;
+                e2.Range = sRange;
+                e2.OutputDir = sDocumentPath;
+                //string sFileName = string.Format("Page_{0}.pdf", e2.Range);
+                string outputfile = Path.Combine(e2.OutputDir, oDocument.PDFFileName);
+                e2.PDFTargetFileName = outputfile;
+                bRet = e2.Execute();
+            }
             UpdateProgress(odeletepagesinput.Job, 25);   // PDF cut done
 
             DCJobs.DocumentConvertor oDocumentConvertor = new DCJobs.DocumentConvertor(_logger);

@@ -946,15 +946,43 @@ namespace JobWorker
         // "REPLACE_OK" marker; the caller falls back to cpdf when this returns false.
         private static bool ReplacePageViaPdfUtils(string sExistingPDF, string sPDFToAdd, int nPageNumber, bool bHD)
         {
+            // c=5 ReplacePage; m=1 HD (upload is a full copy, take its page nPageNumber), m=0 Ex.
+            return RunPdfUtilsPageOp(
+                string.Format("-c 5 -i \"{0}\" -r \"{1}\" -p {2} -m {3}", sExistingPDF, sPDFToAdd, nPageNumber, bHD ? 1 : 0),
+                "REPLACE_OK", "ReplacePageViaPdfUtils");
+        }
+
+        // In-place page ADD via PDFUtils.exe (PDFTron InsertPages, command c=6). Inserts all pages
+        // of sPDFToAdd into sExistingPDF before/after nPageNumber, editing in place instead of
+        // rebuilding the whole document like cpdf does. m=1 add-after, m=0 add-before. cpdf fallback.
+        public static bool AddPagesViaPdfUtils(string sExistingPDF, string sPDFToAdd, int nPageNumber, bool bAddAfter)
+        {
+            return RunPdfUtilsPageOp(
+                string.Format("-c 6 -i \"{0}\" -r \"{1}\" -p {2} -m {3}", sExistingPDF, sPDFToAdd, nPageNumber, bAddAfter ? 1 : 0),
+                "INSERT_OK", "AddPagesViaPdfUtils");
+        }
+
+        // In-place page DELETE via PDFUtils.exe (PDFTron PageRemove, command c=7). Removes nCount
+        // pages starting at nPageNumber in place instead of re-extracting the whole document. cpdf fallback.
+        public static bool RemovePagesViaPdfUtils(string sExistingPDF, int nPageNumber, int nCount)
+        {
+            return RunPdfUtilsPageOp(
+                string.Format("-c 7 -i \"{0}\" -p {1} -n {2}", sExistingPDF, nPageNumber, nCount),
+                "REMOVE_OK", "RemovePagesViaPdfUtils");
+        }
+
+        // Shared runner for the in-place PDFUtils page operations (replace/add/remove). Edits the
+        // document in place via PDFTron — scales to very large docs (cpdf timed out on the 1678-page
+        // IMNASA replace) and preserves the AcroForm. Returns true only on the op's success marker;
+        // callers fall back to cpdf otherwise.
+        private static bool RunPdfUtilsPageOp(string command, string okMarker, string label)
+        {
             try
             {
                 var exePath = System.IO.Path.Combine(AppContext.BaseDirectory, "Tools", "PDFUtils", "PDFUtils.exe");
                 if (!File.Exists(exePath))
                     return false;
                 var exeDir = System.IO.Path.GetDirectoryName(exePath);
-
-                string command = string.Format("-c 5 -i \"{0}\" -r \"{1}\" -p {2} -m {3}",
-                    sExistingPDF, sPDFToAdd, nPageNumber, bHD ? 1 : 0);
 
                 var psi = new ProcessStartInfo
                 {
@@ -983,11 +1011,11 @@ namespace JobWorker
                 }
                 catch { }
 
-                return p.ExitCode == 0 && stdout != null && stdout.Contains("REPLACE_OK");
+                return p.ExitCode == 0 && stdout != null && stdout.Contains(okMarker);
             }
             catch (Exception ex)
             {
-                Console.WriteLine("ReplacePageViaPdfUtils failed: " + ex.Message);
+                Console.WriteLine(label + " failed: " + ex.Message);
                 return false;
             }
         }
@@ -1574,6 +1602,13 @@ namespace JobWorker
         {
             try
             {
+                // PDFTron in-place first: inserts the pages without rebuilding the whole document
+                // like the cpdf merge below does, so it scales to very large docs and preserves the
+                // AcroForm. cpdf fallback if the tool is unavailable or the in-place insert fails.
+                if (AddPagesViaPdfUtils(sExistingPDF, sPDFToAdd, nPageNumber, bAddAfter))
+                    return true;
+                Console.WriteLine("AddPagesToPDF: PDFUtils path unavailable/failed, falling back to cpdf");
+
                 //// Load the existing PDF and the new PDF to add
                 //var existingPdf = PdfDocument.FromFile(sExistingPDF);
                 //var newPdf = PdfDocument.FromFile(sPDFToAdd);
