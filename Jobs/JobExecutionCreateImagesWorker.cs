@@ -57,11 +57,15 @@ namespace JobWorker.Jobs
 
                 // Clears and rewrites the shared document dir — serialize against concurrent
                 // page-ops/convert on the same document (same lock the page-op handlers use).
-                await using var docLock = await DocumentLock.AcquireAsync(context, input.Document.Id, 600, ct);
+                await using var docLock = await DocumentLock.AcquireAsync(context, input.Document.Id, DocLockDefer.LockWaitSeconds, ct);
                 if (!docLock.Acquired)
                 {
-                    await FailAsync(context, jobRow, oJob, "Could not acquire document lock (another operation on this document is in progress)", ct);
-                    return false;
+                    // Another job is operating on this document. Don't block (concurrent same-doc
+                    // waits previously starved the worker thread pool into a deadlock): leave the job
+                    // Waiting and let JobProcessor re-drive its SQS message after a short delay, so
+                    // only one job per document runs at a time and the rest poll back in.
+                    await DocLockDefer.MarkAsync(context, jobRow, oJob, ct);
+                    return true;
                 }
 
                 document oDocument = input.Document;

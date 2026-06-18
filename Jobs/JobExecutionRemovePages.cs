@@ -60,11 +60,15 @@ namespace JobWorker.Jobs
 
                 // Serialize page-ops on this document across workers (prevents same-doc file-in-use
                 // collisions; the job-level atomic claim only covers same-JOB processing).
-                await using var docLock = await DocumentLock.AcquireAsync(context, input.Document.Id, 600, ct);
+                await using var docLock = await DocumentLock.AcquireAsync(context, input.Document.Id, DocLockDefer.LockWaitSeconds, ct);
                 if (!docLock.Acquired)
                 {
-                    await FailAsync(context, jobRow, oJob, "Could not acquire document lock (another operation on this document is in progress)", ct);
-                    return false;
+                    // Another job is operating on this document. Don't block (concurrent same-doc
+                    // waits previously starved the worker thread pool into a deadlock): leave the job
+                    // Waiting and let JobProcessor re-drive its SQS message after a short delay, so
+                    // only one job per document runs at a time and the rest poll back in.
+                    await DocLockDefer.MarkAsync(context, jobRow, oJob, ct);
+                    return true;
                 }
 
                 var mgr = new DCPageManager(context, _emailSender,

@@ -186,4 +186,9 @@ public sealed class WorkerOptions
     public int LongPollSeconds { get; set; } = 10;
     public int EmptyPollDelayMs { get; set; } = 100;
     public int ExtendVisibilityEverySeconds { get; set; } = 45;
+
+    // When a page-op handler can't get the per-document lock (another job is operating on the same
+    // document), the job is deferred and its SQS message re-queued with this delay so it retries
+    // once the document is free. SQS DelaySeconds max is 900.
+    public int DocLockDeferRetrySeconds { get; set; } = 30;
 }

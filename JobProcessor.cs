@@ -114,7 +114,32 @@ public sealed class JobProcessor
             // Stamping Completed here would make the legacy worker's Waiting-only
             // guard skip it — the replace-pages forwarding bug all over again.
             if (currentjob.Status == "Waiting" || currentjob.Status == "WaitingInQueue")
-                return true; // delete message; the legacy worker owns the job now
+            {
+                // A page-op handler deferred this job because another job holds the document lock
+                // (one job per document at a time — prevents the concurrent same-doc deadlock).
+                // Re-drive its message after a short delay so it retries when the document is free.
+                // (Legacy forwards leave a different description and already re-sent to the HP queue,
+                // so they fall through and are simply deleted here.)
+                if (currentjob.Desctiption == JobWorker.Jobs.DocLockDefer.Sentinel)
+                {
+                    try
+                    {
+                        await sqs.SendMessageAsync(new Amazon.SQS.Model.SendMessageRequest
+                        {
+                            QueueUrl = queueUrl,
+                            MessageBody = msg.Body,
+                            DelaySeconds = cfg.DocLockDeferRetrySeconds
+                        }, ct);
+                        _log.LogInformation("Job {JobId} deferred (document busy); re-queued in {Delay}s",
+                            jobId, cfg.DocLockDeferRetrySeconds);
+                    }
+                    catch (Exception ex)
+                    {
+                        _log.LogWarning(ex, "Defer re-send failed for {JobId}; SQS visibility will redeliver", jobId);
+                    }
+                }
+                return true; // delete current message; the legacy worker owns the job OR we re-queued a delayed copy
+            }
 
             currentjob.Status = Constants.JobProcessingStatus.Completed.ToString();
             currentjob.Desctiption = "Completed";
