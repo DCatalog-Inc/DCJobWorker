@@ -5,3 +5,6 @@ Tools/
 .vs/
 secrets/
 publish/
+# deploy staging artifacts (recursive, do not commit)
+bundle-*/
+publish-*/

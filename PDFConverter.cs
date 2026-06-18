@@ -867,6 +867,13 @@ namespace JobWorker
                 if (nPageNumber < 1 || nPageNumber > nExisting || nPageNumber > nNew)
                     return false;
 
+                // PDFTron in-place first: it edits the page in place instead of rebuilding the whole
+                // document like cpdf does, so it scales to very large docs (the 1678-page IMNASA
+                // replace timed out under cpdf) and preserves the AcroForm — no /Fields dedup needed.
+                if (ReplacePageViaPdfUtils(sExistingPDF, sPDFToAdd, nPageNumber, true))
+                    return true;
+                Console.WriteLine("replacePageInPDFHD: PDFUtils path unavailable/failed, falling back to cpdf");
+
                 if (!ReplacePagesViaCpdf(sExistingPDF, sPDFToAdd, nPageNumber, 1, nExisting,
                         nPageNumber.ToString()))
                     return false;
@@ -909,6 +916,11 @@ namespace JobWorker
                     return true;
                 }
 
+                // PDFTron in-place first (scales to huge docs, preserves AcroForm); cpdf fallback.
+                if (ReplacePageViaPdfUtils(sExistingPDF, sPDFToAdd, nPageNumber, false))
+                    return true;
+                Console.WriteLine("replacePageInPDFEx: PDFUtils path unavailable/failed, falling back to cpdf");
+
                 if (!ReplacePagesViaCpdf(sExistingPDF, sPDFToAdd, nPageNumber,
                         numberOfPagesToReplace, nExisting, null))
                     return false;
@@ -922,6 +934,60 @@ namespace JobWorker
             catch (Exception ex)
             {
                 Console.WriteLine("replacePageInPDFEx failed: " + ex);
+                return false;
+            }
+        }
+
+        // In-place page replace via PDFUtils.exe (PDFTron PageInsert/PageRemove, command c=5).
+        // Edits sExistingPDF in place instead of rebuilding the whole document like cpdf does, so it
+        // scales to very large docs (cpdf timed out on the 1678-page IMNASA replace) and preserves
+        // the AcroForm — no /Fields dedup needed. m=1 HD (upload is a full copy, take its page
+        // nPageNumber), m=0 Ex (upload holds the replacement pages). Returns true only on the
+        // "REPLACE_OK" marker; the caller falls back to cpdf when this returns false.
+        private static bool ReplacePageViaPdfUtils(string sExistingPDF, string sPDFToAdd, int nPageNumber, bool bHD)
+        {
+            try
+            {
+                var exePath = System.IO.Path.Combine(AppContext.BaseDirectory, "Tools", "PDFUtils", "PDFUtils.exe");
+                if (!File.Exists(exePath))
+                    return false;
+                var exeDir = System.IO.Path.GetDirectoryName(exePath);
+
+                string command = string.Format("-c 5 -i \"{0}\" -r \"{1}\" -p {2} -m {3}",
+                    sExistingPDF, sPDFToAdd, nPageNumber, bHD ? 1 : 0);
+
+                var psi = new ProcessStartInfo
+                {
+                    FileName = exePath,
+                    Arguments = command,
+                    WorkingDirectory = exeDir,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true
+                };
+
+                using var p = Process.Start(psi);
+                // Drain both pipes concurrently then kill on timeout (same fix as RunCpdf/link
+                // extraction): a blocking read before WaitOrKill defeats the 30-min kill timeout.
+                var outTask = p.StandardOutput.ReadToEndAsync();
+                var errTask = p.StandardError.ReadToEndAsync();
+                DCJobs.ProcessUtil.WaitOrKill(p);
+                string stdout = outTask.GetAwaiter().GetResult();
+                string stderr = errTask.GetAwaiter().GetResult();
+
+                try
+                {
+                    File.AppendAllText(@"C:\DCatalog\JobWorker\logs\pdfutils_out.log", stdout);
+                    File.AppendAllText(@"C:\DCatalog\JobWorker\logs\pdfutils_err.log", stderr);
+                }
+                catch { }
+
+                return p.ExitCode == 0 && stdout != null && stdout.Contains("REPLACE_OK");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("ReplacePageViaPdfUtils failed: " + ex.Message);
                 return false;
             }
         }
