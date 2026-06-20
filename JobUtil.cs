@@ -15,20 +15,32 @@ public sealed class JobUtil
         {
             // Original handlers
             ["JobExecutionConvertPDF"]          = typeof(JobExecutionConvertPDF),
-            ["ReplacePages"]                    = typeof(ReplacePagesJob),
+            // NOTE: the old ["ReplacePages"] mapping pointed at a do-nothing stub that
+            // marked jobs Completed — removed; unknown types now forward to legacy.
             ["JobExecutionSaveLinksToCSV"]      = typeof(JobExecutionSaveLinksToCSV),
 
             // Document management
-            ["JobExecutionReplacePage"]         = typeof(ActivatePagesJobWorker),
+            ["JobExecutionReplacePage"]         = typeof(JobExecutionReplacePage),
+            ["JobExecutionIntroPage"]           = typeof(JobExecutionIntroPageWorker),
             ["ActivateEditionsJob"]             = typeof(ActivateEditionsJobWorker),
             ["JobHtmlGenerate"]                 = typeof(HtmlGenerateJobWorker),
             ["ValidateIndexDocumentJob"]        = typeof(ValidateIndexDocumentJobWorker),
+            ["JobExecutionIndexDocument"]       = typeof(ValidateIndexDocumentJobWorker),
             ["JobExecutionCopyLinks"]           = typeof(CopyLinksJobWorker),
             ["FreeTrialJob"]                    = typeof(FreeTrialJobWorker),
             ["JobAddToAILibrary"]               = typeof(AddToAILibraryJobWorker),
             ["JobExecutionSavePageLabels"]      = typeof(GeneratePDFJobWorker),
-            ["JobExecutionCreateDownloadAllPDF"]= typeof(HDUpdateDownloadPDFJobWorker),
+            ["JobExecutionCreateDownloadAllPDF"] = typeof(JobExecutionCreateDownloadAllPDFWorker),
+            ["JobExecutionCreateImages"]        = typeof(JobExecutionCreateImagesWorker),
             ["JobExecutionGenerateGifFlipbook"] = typeof(JobExecutionGenerateGifFlipbookWorker),
+            ["JobExecutionRecognizeLinks"]      = typeof(JobExecutionRecognizeLinks),
+            ["JobExecutionSaveLinksToPDF"]      = typeof(JobExecutionSaveLinksToPDF),
+            ["JobExecutionSearchProductsInPublication"] = typeof(JobExecutionSearchProductsInPublication),
+            ["JobSearchProductsInDocument"]     = typeof(JobExecutionSearchProductsInDocument),
+            ["JobExecutionAddPages"]            = typeof(JobExecutionAddPages),
+            ["JobExecutionRemovePages"]         = typeof(JobExecutionRemovePages),
+            ["JobExecutionImportCSV"]           = typeof(JobExecutionImportCSV),
+            ["JobExecutionDeleteAll"]           = typeof(JobExecutionDeleteAll),
 
             // Product imports
             ["AdessoJob"]                       = typeof(AdessoJobWorker),
@@ -50,8 +62,10 @@ public sealed class JobUtil
         if (oJob?.JobType == null) { _log.LogError("JobType is null for {JobId}", oJob?.Id); return false; }
         if (!_map.TryGetValue(oJob.JobType.Name, out var type))
         {
-            _log.LogError("No handler for job type {Type}", oJob.JobType.Name);
-            return false;
+            // Not ported to this worker. The legacy DocProcessor is decommissioned, so we can no
+            // longer forward — fail the job visibly (with the type name) instead of orphaning it.
+            _log.LogWarning("No handler for job type {Type} — failing (legacy decommissioned)", oJob.JobType.Name);
+            type = typeof(FailUnportedJobType);
         }
 
         var handler = (IJobExecution)ActivatorUtilities.CreateInstance(_sp, type);

@@ -104,6 +104,20 @@ var builder = Host.CreateDefaultBuilder(args)
             DCCommon.Instance.RepositoryLocationDB ??= DCCommon.Instance.RepositoryLocation;
         }
 
+        // OpenSearch — initialize the static search endpoint used by document indexing
+        // (DocumentConvertor.indexDocument in the convert pipeline). Without this,
+        // ElasticSearchEngine builds new Uri(null) -> "Value cannot be null (uriString)".
+        var searchUri = ctx.Configuration["OpenSearch:Endpoint"];
+        if (!string.IsNullOrEmpty(searchUri))
+        {
+            ElasticSearchEngine.Init(searchUri);
+            Log.Information("ElasticSearchEngine initialized: {Uri}", searchUri);
+        }
+        else
+        {
+            Log.Warning("OpenSearch:Endpoint not configured — document indexing will fail.");
+        }
+
         // Email / SMS
         services.Configure<AuthMessageSenderOptions>(ctx.Configuration.GetSection("Email"));
         services.AddTransient<IEmailSender, JobWorkerMessageSender>();
@@ -116,8 +130,8 @@ var builder = Host.CreateDefaultBuilder(args)
 
         // Core job handlers (original)
         services.AddTransient<JobExecutionConvertPDF>();
-        services.AddTransient<ReplacePagesJob>();
         services.AddTransient<JobExecutionSaveLinksToCSV>();
+        services.AddTransient<JobExecutionIntroPageWorker>();
 
         // Document management handlers
         services.AddTransient<ActivatePagesJobWorker>();
@@ -128,7 +142,7 @@ var builder = Host.CreateDefaultBuilder(args)
         services.AddTransient<FreeTrialJobWorker>();
         services.AddTransient<AddToAILibraryJobWorker>();
         services.AddTransient<GeneratePDFJobWorker>();
-        services.AddTransient<HDUpdateDownloadPDFJobWorker>();
+
         services.AddTransient<JobExecutionGenerateGifFlipbookWorker>();
 
         // Product import handlers
@@ -172,4 +186,9 @@ public sealed class WorkerOptions
     public int LongPollSeconds { get; set; } = 10;
     public int EmptyPollDelayMs { get; set; } = 100;
     public int ExtendVisibilityEverySeconds { get; set; } = 45;
+
+    // When a page-op handler can't get the per-document lock (another job is operating on the same
+    // document), the job is deferred and its SQS message re-queued with this delay so it retries
+    // once the document is free. SQS DelaySeconds max is 900.
+    public int DocLockDeferRetrySeconds { get; set; } = 30;
 }

@@ -13,6 +13,7 @@ using System.Threading.Tasks;
 using System.Xml;
 using Core.Models;
 using DCatalogCommon.Data;
+using Microsoft.EntityFrameworkCore;
 using iText.Kernel.Pdf.Annot;
 using iTextSharp.text.pdf;
 using iTextSharp.text;
@@ -83,35 +84,33 @@ namespace JobWorker.Jobs
 
         public async Task<bool> ExecuteAsync(job oJob, CancellationToken ct = default)
         {
-
-            oJob.Progress = 10;
-            oJob.Status = Constants.JobProcessingStatus.Processing.ToString();
             document oDocument = null;
-            //try
+            try
             {
-                
-                savelinkstopdfinput oSaveLinksToPdfinput = _context.savelinkstopdfinput
+                var oSaveLinksToPdfinput = await _context.savelinkstopdfinput
+                  .Include(d => d.Job)
+                  .Include(d => d.Document)
+                  .Include(d => d.Document.Publication)
+                  .Include(d => d.Document.Publication.PublicationTemplate)
+                  .Include(d => d.Document.Publication.Publisher)
                   .Where(d => d.Job.Id == oJob.Id)
-                  .SingleOrDefault();
-                if (oSaveLinksToPdfinput != null)
+                  .SingleOrDefaultAsync(ct);
+                if (oSaveLinksToPdfinput == null || oSaveLinksToPdfinput.Document == null)
                 {
-
-                    oDocument = oSaveLinksToPdfinput.Document;
-                    //sInputFileName = oSaveLinksToPdfinput.InputFileName;
-                    //sOutputDirectory = oSaveLinksToPdfinput.OutputDirectory;
-                    //string sJobFile = generateJobFile(oJob, oSaveLinksToPdfinput);
-                    //sFilename = oGenerateImagesInput.filename;
-                    //bGenerateThumbnails = oGenerateImagesInput.generatethumbnails;
+                    oJob.Status = Constants.JobProcessingStatus.Failed.ToString();
+                    oJob.Desctiption = "No savelinkstopdfinput/document for job";
+                    _context.Update(oJob);
+                    await _context.SaveChangesAsync(ct);
+                    return false;
                 }
+                oDocument = oSaveLinksToPdfinput.Document;
 
                 DCS3Services oDCS3Services = new DCS3Services();
-                string sOutputDirectory = DocumentUtilBase.getDocumentPath(oDocument);
                 string sBucketName = string.IsNullOrEmpty(oDocument.Publication.Publisher.BucketName) ? Core.Constants.DEFAULT_DOCS_LOCATION : oDocument.Publication.Publisher.BucketName;
                 string sPublisherName = Utility.GenerateFriendlyURL(oDocument.Publication.Publisher.Name);
                 string sPublicationName = Utility.GenerateFriendlyURL(oDocument.Publication.Name);
                 string sKeyPrefix = string.Format("{0}/{1}/{2}", sPublisherName, sPublicationName,
                     oDocument.Id);
-
 
                 //1. Download files.
                 bool bDownloadedPDF = downloadFiles(oDocument, sBucketName);
@@ -120,31 +119,37 @@ namespace JobWorker.Jobs
                     oJob.Progress = 100;
                     oJob.Status = Constants.JobProcessingStatus.Failed.ToString();
                     oJob.Desctiption = "Cannot find the PDF File";
-
+                    _context.Update(oJob);
+                    await _context.SaveChangesAsync(ct);
+                    return false;
                 }
-                oJob.Progress = 30;
-                oJob.Status = Constants.JobProcessingStatus.Processing.ToString();
 
                 string sDocumentPath = DocumentUtilBase.getDocumentPath(oDocument);
-
                 string sPDFWithLinksFileName = oDocument.PDFFileName.Replace(".pdf", "_Links.pdf");
-                string sFullPDFFileName = Path.Combine(sDocumentPath, oDocument.PDFFileName);
                 string sFullTempFileName = Path.Combine(sDocumentPath, sPDFWithLinksFileName);
                 bool bSaveLinks = saveLinksToPDF(oDocument, sFullTempFileName);
                 if (bSaveLinks)
                 {
                     oDocument.PDFForDownloadFile = sPDFWithLinksFileName;
-                    //oDocument.PDFFileName = sPDFWithLinksFileName;
                     oDCS3Services.uploadFile(sBucketName, sFullTempFileName, sKeyPrefix, sPDFWithLinksFileName);
                     string sDocumentJson = Path.Combine(sDocumentPath, "document.json");
                     oDCS3Services.uploadFile(sBucketName, sDocumentJson, sKeyPrefix);
-
+                    _context.Update(oDocument);
                 }
                 oJob.Progress = 100;
                 oJob.Status = Constants.JobProcessingStatus.Completed.ToString();
+                _context.Update(oJob);
+                await _context.SaveChangesAsync(ct);
+                return true;
             }
-            return true;
-
+            catch (Exception e)
+            {
+                Console.WriteLine($"# SaveLinksToPDF failed for job {oJob.Id}: {e}");
+                oJob.Status = Constants.JobProcessingStatus.Failed.ToString();
+                oJob.Desctiption = "Save links to PDF failed: " + e.Message;
+                try { _context.Update(oJob); await _context.SaveChangesAsync(ct); } catch { }
+                return false;
+            }
         }
 
         //show "D:\DCatalog\AyrKing-LLC-Capabilities-Brochure.pdf" savelinksfromjson "D:\DCatalog\Docs\DCatalog-Inc\Test\eaf95318-b509-4432-a7e6-cbf48499e325\document.json"

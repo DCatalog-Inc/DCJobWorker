@@ -75,7 +75,19 @@ namespace JobWorker.Jobs
             ILogger<ProductImportJob> loggerForProductImport = _loggerFactory.CreateLogger<ProductImportJob>();
             var webEnv = new HostEnvironmentBridge(_hostEnv);
             var dcJob = new ValidateIndexDocumentJob(ctx, _emailSender, loggerForProductImport, _config, _sqs, webEnv);
-            dcJob.ExecuteJobAsync(documentId);
+            if (input.RegenerateText)
+            {
+                // Force a full regenerate + re-index. ExecuteJobAsync only acts when the doc has
+                // zero OpenSearch hits, so an already-indexed doc with empty/stale page text would
+                // never get fixed by a normal re-index. RegenerateText removes the existing entries
+                // first, so the (V1) regenerate-text path runs and the doc is rebuilt.
+                _log.LogInformation("ValidateIndexDocumentJobWorker: force re-index (RegenerateText) for {DocId}", documentId);
+                dcJob.ForceReindex(documentId);
+            }
+            else
+            {
+                dcJob.ExecuteJobAsync(documentId);
+            }
 
             return true;
         }

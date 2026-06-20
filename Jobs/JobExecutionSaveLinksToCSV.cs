@@ -26,6 +26,13 @@ namespace JobWorker.Jobs
     internal class JobExecutionSaveLinksToCSV : IJobExecution
     {
         private readonly ApplicationDbContext _context;
+
+        // IMNASA's manual "Save Links to CSV" export must match their nightly FTP feed
+        // (DCJobs.ImnaseProductsExport): type-0 links only, SKU = last URL path segment, 4-digit
+        // zero-padded page, raw URL. Gate that FTP-format branch on their publisher id. Everyone
+        // else keeps the generic format (type 0/5, sku from ?sku=, normalized URL, plain page).
+        private const string ImnasaPublisherId = "16fb4a88-445c-49be-ad06-73edfa980ec2";
+
         public JobExecutionSaveLinksToCSV(ApplicationDbContext context)
         {
             _context = context;
@@ -102,6 +109,7 @@ namespace JobWorker.Jobs
             string sKeyPrefix = string.Format("{0}/{1}/{2}", sPublisherName, sPublicationName,
                   doc.Id);
 
+            bool bImnasaFormat = string.Equals(doc.Publication?.Publisher?.Id, ImnasaPublisherId, StringComparison.OrdinalIgnoreCase);
             var records = new List<ImnaseCSVHeader>();
             int lastProgress = oJob.Progress;
             //numofpages = 20;
@@ -133,12 +141,27 @@ namespace JobWorker.Jobs
                 }
 
                 JObject pageJson = JObject.Parse(System.IO.File.ReadAllText(sFullFileName));
-                string selectsequence = "$..link[?(@['@attributes'].type == '0' || @['@attributes'].type == '5')]";
+                // IMNASA: type-0 links only (matches the FTP feed). Generic: type 0 and 5.
+                string selectsequence = bImnasaFormat
+                    ? "$..link[?(@['@attributes'].type == '0')]"
+                    : "$..link[?(@['@attributes'].type == '0' || @['@attributes'].type == '5')]";
                 IEnumerable<JToken> jLinks = pageJson.SelectTokens(selectsequence);
                 foreach (JToken item in jLinks)
                 {
                     JValue linkurl = (JValue)item["@attributes"]["url"];
                     string slinkurl = linkurl.ToString();
+
+                    if (bImnasaFormat)
+                    {
+                        // Byte-compatible with ImnaseProductsExport: SKU = last URL path segment,
+                        // page = 4-digit zero-padded, raw URL (no normalization).
+                        string sSku = string.IsNullOrEmpty(slinkurl)
+                            ? slinkurl
+                            : slinkurl.Substring(slinkurl.LastIndexOf("/") + 1);
+                        records.Add(new ImnaseCSVHeader { SKU = sSku, PageNumber = i.ToString("D4"), URL = slinkurl });
+                        continue;
+                    }
+
                     string sProductName = "";
                     if (!string.IsNullOrEmpty(slinkurl))
                     {
@@ -158,9 +181,6 @@ namespace JobWorker.Jobs
                     {
                         records.Add(new ImnaseCSVHeader { SKU = sProductName, PageNumber = sPageNumber, URL = slinkurl });
                     }
-                   
-                   
-
                 }
             }
             string sOutputFolder = Path.GetTempPath();

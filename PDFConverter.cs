@@ -58,6 +58,10 @@ namespace JobWorker
         {
             if (_PDFDoc != null)
             {
+                // Close() is required to release the PdfReader's underlying FileStream;
+                // nulling alone leaves the PDF locked until GC, so File.Delete/Move on it
+                // fails with "file in use".
+                try { _PDFDoc.Close(); } catch { }
                 _PDFDoc = null;
             }
         }
@@ -619,7 +623,7 @@ namespace JobWorker
             ProcessStartInfo cmdsi = new ProcessStartInfo(exePath);
             cmdsi.Arguments = command;
             Process cmd = Process.Start(cmdsi);
-            cmd.WaitForExit();
+            DCJobs.ProcessUtil.WaitOrKill(cmd);
             int result = cmd.ExitCode;
             if (result != 0)
             {
@@ -670,10 +674,10 @@ namespace JobWorker
                 output_path += "\\";
 
             String command = string.Format("convert -O resolution={0} -o \"{1}{2}{3}{4}.jpg\" \"{5}\" {6}", oCreateImagesInput.Resolution, output_path, oCreateImagesInput.Prefix, nTargetPage, "%s", _InputFileName, nPageNumber);
-            ProcessStartInfo cmdsi = new ProcessStartInfo("dcmutool.exe");
+            ProcessStartInfo cmdsi = new ProcessStartInfo(System.IO.Path.Combine(AppContext.BaseDirectory, "Tools", "dcmutool", "dcmutool.exe"));
             cmdsi.Arguments = command;
             Process cmd = Process.Start(cmdsi);
-            cmd.WaitForExit();
+            DCJobs.ProcessUtil.WaitOrKill(cmd);
             string sTargetFileName = string.Format("{0}{1}{2}.jpg", output_path, oCreateImagesInput.Prefix, nTargetPage);
             DocumentConvertor.createThumbnails(output_path, sTargetFileName, nTargetPage.ToString());
             using (System.Drawing.Image img = System.Drawing.Image.FromFile(sTargetFileName))
@@ -692,10 +696,10 @@ namespace JobWorker
                 output_path += "\\";
 
             String command = string.Format("convert -O resolution={0} -o \"{1}{2}{3}{4}.jpg\" \"{5}\" {6}", oCreateImagesInput.Resolution, output_path, oCreateImagesInput.Prefix, nTargetPage, "%s", _InputFileName, nTargetPage);
-            ProcessStartInfo cmdsi = new ProcessStartInfo("dcmutool.exe");
+            ProcessStartInfo cmdsi = new ProcessStartInfo(System.IO.Path.Combine(AppContext.BaseDirectory, "Tools", "dcmutool", "dcmutool.exe"));
             cmdsi.Arguments = command;
             Process cmd = Process.Start(cmdsi);
-            cmd.WaitForExit();
+            DCJobs.ProcessUtil.WaitOrKill(cmd);
             string sTargetFileName = string.Format("{0}{1}{2}.jpg", output_path, oCreateImagesInput.Prefix, nTargetPage);
             DocumentConvertor.createThumbnails(output_path, sTargetFileName, nTargetPage.ToString());
             using (System.Drawing.Image img = System.Drawing.Image.FromFile(sTargetFileName))
@@ -848,176 +852,172 @@ namespace JobWorker
         }
         */
 
+        // The uploaded PDF is a COMPLETE copy of the document: swap in its page nPageNumber.
+        // cpdf-based — the prior iText CopyTo/PdfPageFormCopier path threw a contentless
+        // "Unknown PdfException" on catalog PDFs with AcroForm structures (same failure
+        // AddPagesToPDF hit), and additionally removed pages N..end while inserting only one.
         static public bool replacePageInPDFHD(int nPageNumber, string sExistingPDF, string sPDFToAdd)
         {
             try
             {
-                //In case we are replacing all the pages just copy the file.
+                int nExisting = GetPdfPageCount(sExistingPDF);
+                int nNew = GetPdfPageCount(sPDFToAdd);
+                if (nExisting < 1 || nNew < 1)
+                    return false;
+                if (nPageNumber < 1 || nPageNumber > nExisting || nPageNumber > nNew)
+                    return false;
 
-                //var oCurrentPDF = PdfDocument.FromFile(sExistingPDF);
-                //var oNewPDF = PdfDocument.FromFile(sPDFToAdd);
-                //int nExitingPageCount = oCurrentPDF.PageCount;
-                //int nNumberOfPageInNewPDF = oNewPDF.PageCount;
-                //int nNumberOfPageToReplace = Math.Min(nNumberOfPageInNewPDF, nExitingPageCount - nPageNumber + 1);
-                //if (nNumberOfPageToReplace < 1)
-                //    return false;
-                //if (nNumberOfPageToReplace == nExitingPageCount)
-                //{
-                //    nNumberOfPageToReplace = 1;
-                //    oCurrentPDF.RemovePage(nPageNumber - 1);
-                //}
-                //else
-                //{
-                //    oCurrentPDF.RemovePages(nPageNumber - 1, nPageNumber - 1 + nNumberOfPageToReplace - 1);
-                //}
-                //if (nNumberOfPageInNewPDF > 1)
-                //{
-                //    PdfDocument oSinglePagePDF = oNewPDF.CopyPage(0);
-                //    oCurrentPDF.InsertPdf(oSinglePagePDF, nPageNumber - 1);
-                //    oSinglePagePDF.Dispose();
-                //}
-                //else
-                //{
-                //    oCurrentPDF.InsertPdf(oNewPDF, nPageNumber - 1);
-                //}
-                //oCurrentPDF.SaveAs(sExistingPDF, false);
+                // PDFTron in-place first: it edits the page in place instead of rebuilding the whole
+                // document like cpdf does, so it scales to very large docs (the 1678-page IMNASA
+                // replace timed out under cpdf) and preserves the AcroForm — no /Fields dedup needed.
+                if (ReplacePageViaPdfUtils(sExistingPDF, sPDFToAdd, nPageNumber, true))
+                    return true;
+                Console.WriteLine("replacePageInPDFHD: PDFUtils path unavailable/failed, falling back to cpdf");
 
-                //oCurrentPDF.Dispose();
-                //oNewPDF.Dispose();
+                if (!ReplacePagesViaCpdf(sExistingPDF, sPDFToAdd, nPageNumber, 1, nExisting,
+                        nPageNumber.ToString()))
+                    return false;
 
-                //Updated using Itext7
-                string tempFile = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(sExistingPDF), "temp.pdf");
-
-                using (iText.Kernel.Pdf.PdfDocument existingPdf = new iText.Kernel.Pdf.PdfDocument(new PdfReader(sExistingPDF), new PdfWriter(tempFile)))
-                using (iText.Kernel.Pdf.PdfDocument newPdf = new iText.Kernel.Pdf.PdfDocument(new PdfReader(sPDFToAdd)))
-                {
-                    int existingPageCount = existingPdf.GetNumberOfPages();
-                    int newPdfPageCount = newPdf.GetNumberOfPages();
-
-                    int numberOfPagesToReplace = Math.Min(newPdfPageCount, existingPageCount - nPageNumber + 1);
-
-                    if (numberOfPagesToReplace < 1)
-                        return false;
-
-                    // Special handling if replacing all remaining pages
-                    if (numberOfPagesToReplace == existingPageCount)
-                    {
-                        // Remove only the target page
-                        existingPdf.RemovePage(nPageNumber);
-                    }
-                    else
-                    {
-                        // Remove pages one by one in reverse order
-                        int startPage = nPageNumber;
-                        int endPage = nPageNumber + numberOfPagesToReplace - 1;
-                        for (int i = endPage; i >= startPage; i--)
-                        {
-                            existingPdf.RemovePage(i);
-                        }
-                    }
-
-                    var copier = new PdfPageFormCopier();
-
-                    // Insert new pages
-                    if (newPdfPageCount > 1)
-                    {
-                        // If multiple pages, copy first page as single-page PDF and insert
-                        PdfPage singlePage = newPdf.GetPage(1).CopyTo(existingPdf);
-                        existingPdf.AddPage(nPageNumber, singlePage); // insert at index
-                    }
-                    else
-                    {
-                        // Single-page PDF: insert at nPageNumber
-                        PdfPage pageToInsert = newPdf.GetPage(1).CopyTo(existingPdf);
-                        existingPdf.AddPage(nPageNumber, pageToInsert);
-                    }
-                }
-
-                // Replace original PDF
-                File.Delete(sExistingPDF);
-                File.Move(tempFile, sExistingPDF);
+                // Fillable catalog: cpdf's split+concat duplicates the document-level /Fields array
+                // (it roughly doubles per replace) until iText can no longer load the form to fill
+                // it. Collapse the duplicates back to one entry per field. See DedupAcroFormFields.
+                if (PdfHasAcroForm(sExistingPDF))
+                    DedupAcroFormFields(sExistingPDF);
+                return true;
             }
-            catch (Exception)
+            catch (Exception ex)
             {
-
-                //Logger.log.Error("Error when replacing pages in PDF " + e.Message);
+                Console.WriteLine("replacePageInPDFHD failed: " + ex);
+                return false;
             }
-            return true;
         }
 
+        // The uploaded PDF holds the replacement page(s): existing pages
+        // nPageNumber..nPageNumber+r-1 are replaced with ALL pages of the upload
+        // (r = min(uploaded count, pages remaining from nPageNumber)).
+        // cpdf-based — see replacePageInPDFHD for why iText was dropped.
         static public bool replacePageInPDFEx(int nPageNumber, string sExistingPDF, string sPDFToAdd)
         {
-            //try
-            //{
-            //    //In case we are replacing all the pages just copy the file.
-
-            //    var oCurrentPDF = PdfDocument.FromFile(sExistingPDF);
-            //    var oNewPDF = PdfDocument.FromFile(sPDFToAdd);
-            //    int nExitingPageCount = oCurrentPDF.PageCount;
-            //    int nNumberOfPageToReplace = oNewPDF.PageCount;
-            //    nNumberOfPageToReplace = Math.Min(nNumberOfPageToReplace, nExitingPageCount - nPageNumber + 1);
-            //    if (nNumberOfPageToReplace < 1)
-            //        return false;
-            //    if (nPageNumber == 1 && nNumberOfPageToReplace == nExitingPageCount)
-            //    {
-            //        File.Copy(sPDFToAdd, sExistingPDF, true);
-            //        oCurrentPDF.Dispose();
-            //        oNewPDF.Dispose();
-            //        return true;
-            //    }
-            //    //it is using start index and end index.
-            //    oCurrentPDF.RemovePages(nPageNumber - 1, nPageNumber - 1 + nNumberOfPageToReplace - 1);
-            //    oCurrentPDF.InsertPdf(oNewPDF, nPageNumber - 1);
-            //    oCurrentPDF.SaveAs(sExistingPDF, false);
-            //    oCurrentPDF.Dispose();
-            //    oNewPDF.Dispose();
-            //}
-            //catch (Exception)
-            //{
-
-            //    //Logger.log.Error("Error when replacing pages in PDF " + e.Message);
-            //}
-
-            // Itext7
-            string tempFile = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(sExistingPDF), "temp.pdf");
-
-            using (iText.Kernel.Pdf.PdfDocument existingPdf = new iText.Kernel.Pdf.PdfDocument(new PdfReader(sExistingPDF), new PdfWriter(tempFile)))
-            using (iText.Kernel.Pdf.PdfDocument newPdf = new iText.Kernel.Pdf.PdfDocument(new PdfReader(sPDFToAdd)))
+            try
             {
-                int existingPageCount = existingPdf.GetNumberOfPages();
-                int numberOfPagesToReplace = Math.Min(newPdf.GetNumberOfPages(), existingPageCount - nPageNumber + 1);
+                int nExisting = GetPdfPageCount(sExistingPDF);
+                int nNew = GetPdfPageCount(sPDFToAdd);
+                if (nExisting < 1 || nNew < 1)
+                    return false;
 
+                int numberOfPagesToReplace = Math.Min(nNew, nExisting - nPageNumber + 1);
                 if (numberOfPagesToReplace < 1)
                     return false;
 
                 // Special case: replace entire document
-                if (nPageNumber == 1 && numberOfPagesToReplace == existingPageCount)
+                if (nPageNumber == 1 && numberOfPagesToReplace == nExisting)
                 {
-                    existingPdf.Close();
-                    newPdf.Close();
                     File.Copy(sPDFToAdd, sExistingPDF, true);
                     return true;
                 }
 
-                int startPage = nPageNumber;                        // 1-based
-                int endPage = nPageNumber + numberOfPagesToReplace - 1;
+                // PDFTron in-place first (scales to huge docs, preserves AcroForm); cpdf fallback.
+                if (ReplacePageViaPdfUtils(sExistingPDF, sPDFToAdd, nPageNumber, false))
+                    return true;
+                Console.WriteLine("replacePageInPDFEx: PDFUtils path unavailable/failed, falling back to cpdf");
 
-                // Remove pages
-                for (int i = endPage; i >= startPage; i--)
-                {
-                    existingPdf.RemovePage(i);  // RemovePage(int pageNumber) exists
-                }
+                if (!ReplacePagesViaCpdf(sExistingPDF, sPDFToAdd, nPageNumber,
+                        numberOfPagesToReplace, nExisting, null))
+                    return false;
 
-                // Insert new PDF pages at startPage
-                var copier = new PdfPageFormCopier();
-                newPdf.CopyPagesTo(1, newPdf.GetNumberOfPages(), existingPdf, startPage, copier);
+                // Fillable catalog: collapse the /Fields duplicates cpdf's concat produces
+                // (see HD path above and DedupAcroFormFields).
+                if (PdfHasAcroForm(sExistingPDF))
+                    DedupAcroFormFields(sExistingPDF);
+                return true;
             }
+            catch (Exception ex)
+            {
+                Console.WriteLine("replacePageInPDFEx failed: " + ex);
+                return false;
+            }
+        }
 
-            // Replace original PDF with temp file
-            File.Delete(sExistingPDF);
-            File.Move(tempFile, sExistingPDF);
+        // In-place page replace via PDFUtils.exe (PDFTron PageInsert/PageRemove, command c=5).
+        // Edits sExistingPDF in place instead of rebuilding the whole document like cpdf does, so it
+        // scales to very large docs (cpdf timed out on the 1678-page IMNASA replace) and preserves
+        // the AcroForm — no /Fields dedup needed. m=1 HD (upload is a full copy, take its page
+        // nPageNumber), m=0 Ex (upload holds the replacement pages). Returns true only on the
+        // "REPLACE_OK" marker; the caller falls back to cpdf when this returns false.
+        private static bool ReplacePageViaPdfUtils(string sExistingPDF, string sPDFToAdd, int nPageNumber, bool bHD)
+        {
+            // c=5 ReplacePage; m=1 HD (upload is a full copy, take its page nPageNumber), m=0 Ex.
+            return RunPdfUtilsPageOp(
+                string.Format("-c 5 -i \"{0}\" -r \"{1}\" -p {2} -m {3}", sExistingPDF, sPDFToAdd, nPageNumber, bHD ? 1 : 0),
+                "REPLACE_OK", "ReplacePageViaPdfUtils");
+        }
 
-            return true;
+        // In-place page ADD via PDFUtils.exe (PDFTron InsertPages, command c=6). Inserts all pages
+        // of sPDFToAdd into sExistingPDF before/after nPageNumber, editing in place instead of
+        // rebuilding the whole document like cpdf does. m=1 add-after, m=0 add-before. cpdf fallback.
+        public static bool AddPagesViaPdfUtils(string sExistingPDF, string sPDFToAdd, int nPageNumber, bool bAddAfter)
+        {
+            return RunPdfUtilsPageOp(
+                string.Format("-c 6 -i \"{0}\" -r \"{1}\" -p {2} -m {3}", sExistingPDF, sPDFToAdd, nPageNumber, bAddAfter ? 1 : 0),
+                "INSERT_OK", "AddPagesViaPdfUtils");
+        }
+
+        // In-place page DELETE via PDFUtils.exe (PDFTron PageRemove, command c=7). Removes nCount
+        // pages starting at nPageNumber in place instead of re-extracting the whole document. cpdf fallback.
+        public static bool RemovePagesViaPdfUtils(string sExistingPDF, int nPageNumber, int nCount)
+        {
+            return RunPdfUtilsPageOp(
+                string.Format("-c 7 -i \"{0}\" -p {1} -n {2}", sExistingPDF, nPageNumber, nCount),
+                "REMOVE_OK", "RemovePagesViaPdfUtils");
+        }
+
+        // Shared runner for the in-place PDFUtils page operations (replace/add/remove). Edits the
+        // document in place via PDFTron — scales to very large docs (cpdf timed out on the 1678-page
+        // IMNASA replace) and preserves the AcroForm. Returns true only on the op's success marker;
+        // callers fall back to cpdf otherwise.
+        private static bool RunPdfUtilsPageOp(string command, string okMarker, string label)
+        {
+            try
+            {
+                var exePath = System.IO.Path.Combine(AppContext.BaseDirectory, "Tools", "PDFUtils", "PDFUtils.exe");
+                if (!File.Exists(exePath))
+                    return false;
+                var exeDir = System.IO.Path.GetDirectoryName(exePath);
+
+                var psi = new ProcessStartInfo
+                {
+                    FileName = exePath,
+                    Arguments = command,
+                    WorkingDirectory = exeDir,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true
+                };
+
+                using var p = Process.Start(psi);
+                // Drain both pipes concurrently then kill on timeout (same fix as RunCpdf/link
+                // extraction): a blocking read before WaitOrKill defeats the 30-min kill timeout.
+                var outTask = p.StandardOutput.ReadToEndAsync();
+                var errTask = p.StandardError.ReadToEndAsync();
+                DCJobs.ProcessUtil.WaitOrKill(p);
+                string stdout = outTask.GetAwaiter().GetResult();
+                string stderr = errTask.GetAwaiter().GetResult();
+
+                try
+                {
+                    File.AppendAllText(@"C:\DCatalog\JobWorker\logs\pdfutils_out.log", stdout);
+                    File.AppendAllText(@"C:\DCatalog\JobWorker\logs\pdfutils_err.log", stderr);
+                }
+                catch { }
+
+                return p.ExitCode == 0 && stdout != null && stdout.Contains(okMarker);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(label + " failed: " + ex.Message);
+                return false;
+            }
         }
 
 
@@ -1045,7 +1045,7 @@ namespace JobWorker
             ProcessStartInfo cmdsi = new ProcessStartInfo("PDFUtils.exe");
             cmdsi.Arguments = command;
             Process cmd = Process.Start(cmdsi);
-            cmd.WaitForExit();
+            DCJobs.ProcessUtil.WaitOrKill(cmd);
             return true;
 
         }
@@ -1427,10 +1427,10 @@ namespace JobWorker
                 output_path += "\\";
 
             String command = string.Format("convert -O resolution={0} -o \"{1}{2}{3}{4}.jpg\" \"{5}\" {6}", oCreateImagesInput.Resolution, output_path, oCreateImagesInput.Prefix, nTargetPage, "%s", _InputFileName, nTargetPage);
-            ProcessStartInfo cmdsi = new ProcessStartInfo("dcmutool.exe");
+            ProcessStartInfo cmdsi = new ProcessStartInfo(System.IO.Path.Combine(AppContext.BaseDirectory, "Tools", "dcmutool", "dcmutool.exe"));
             cmdsi.Arguments = command;
             Process cmd = Process.Start(cmdsi);
-            cmd.WaitForExit();
+            DCJobs.ProcessUtil.WaitOrKill(cmd);
             string sTargetFileName = string.Format("{0}{1}{2}.jpg", output_path, oCreateImagesInput.Prefix, nTargetPage);
 
 
@@ -1602,6 +1602,13 @@ namespace JobWorker
         {
             try
             {
+                // PDFTron in-place first: inserts the pages without rebuilding the whole document
+                // like the cpdf merge below does, so it scales to very large docs and preserves the
+                // AcroForm. cpdf fallback if the tool is unavailable or the in-place insert fails.
+                if (AddPagesViaPdfUtils(sExistingPDF, sPDFToAdd, nPageNumber, bAddAfter))
+                    return true;
+                Console.WriteLine("AddPagesToPDF: PDFUtils path unavailable/failed, falling back to cpdf");
+
                 //// Load the existing PDF and the new PDF to add
                 //var existingPdf = PdfDocument.FromFile(sExistingPDF);
                 //var newPdf = PdfDocument.FromFile(sPDFToAdd);
@@ -1618,40 +1625,227 @@ namespace JobWorker
                 //existingPdf.Dispose();
                 //newPdf.Dispose();
 
-                //Updated Itext7
-                // Paths
+                // Merge via cpdf.exe (bundled + proven — the same tool used for page deletion). The prior
+                // iText CopyPagesTo + PdfPageFormCopier path threw a contentless "Unknown PdfException" on
+                // catalog PDFs whose AcroForm structure the form-copier couldn't reconcile, even though
+                // both PDFs open and page-count fine on their own.
                 string existingPdfPath = sExistingPDF;
                 string newPdfPath = sPDFToAdd;
-                string tempOutput = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(existingPdfPath), "temp.pdf");
+                string dir = System.IO.Path.GetDirectoryName(existingPdfPath);
+                string tempOutput = System.IO.Path.Combine(dir, "temp_addpages.pdf");
+                try { if (System.IO.File.Exists(tempOutput)) System.IO.File.Delete(tempOutput); } catch { }
 
-                // Determine start page index (0-based in IronPDF, 1-based in iText7)
-                int startPageIndex = bAddAfter ? nPageNumber : nPageNumber - 1;
+                // Existing page count (read-only open works — only the form-copier merge failed).
+                int nExisting;
+                using (var reader = new PdfReader(existingPdfPath))
+                using (var doc = new iText.Kernel.Pdf.PdfDocument(reader))
+                    nExisting = doc.GetNumberOfPages();
 
-                using (iText.Kernel.Pdf.PdfDocument pdfDoc = new iText.Kernel.Pdf.PdfDocument(new PdfReader(existingPdfPath), new PdfWriter(tempOutput)))
-                using (iText.Kernel.Pdf.PdfDocument newPdf = new iText.Kernel.Pdf.PdfDocument(new PdfReader(newPdfPath)))
+                // How many existing pages precede the inserted block.
+                int insertAfter = bAddAfter ? nPageNumber : nPageNumber - 1;
+                if (insertAfter < 0) insertAfter = 0;
+                if (insertAfter > nExisting) insertAfter = nExisting;
+
+                // cpdf merge: <existing 1-insertAfter> <new all> <existing insertAfter+1-end> -o temp
+                var cpdfArgs = new System.Text.StringBuilder();
+                if (insertAfter >= 1)
+                    cpdfArgs.Append("\"" + existingPdfPath + "\" 1-" + insertAfter + " ");
+                cpdfArgs.Append("\"" + newPdfPath + "\" ");
+                if (insertAfter < nExisting)
+                    cpdfArgs.Append("\"" + existingPdfPath + "\" " + (insertAfter + 1) + "-end ");
+                cpdfArgs.Append("-o \"" + tempOutput + "\"");
+
+                if (!RunCpdf(cpdfArgs.ToString()))
+                    return false;
+                if (!System.IO.File.Exists(tempOutput))
                 {
-                    // PdfPageFormCopier preserves annotations, form fields, and other content
-                    var copier = new PdfPageFormCopier();
-
-                    // iText7 pages are 1-based
-                    int totalExistingPages = pdfDoc.GetNumberOfPages();
-                    int insertPosition = startPageIndex + 1; // insertion point in iText7
-
-                    // Copy pages from new PDF to the existing PDF at the desired position
-                    newPdf.CopyPagesTo(1, newPdf.GetNumberOfPages(), pdfDoc, insertPosition, copier);
+                    Console.WriteLine("cpdf merge produced no output file: " + tempOutput);
+                    return false;
                 }
 
                 // Replace original PDF
-                System.IO.File.Delete(existingPdfPath);
-                System.IO.File.Move(tempOutput, existingPdfPath);
+                System.IO.File.Move(tempOutput, existingPdfPath, true);
             }
             catch (Exception ex)
             {
-                Console.WriteLine("Exception when adding pages: " + ex.Message);
+                // Log the FULL exception (was only ex.Message="Unknown PdfException", which hid the real
+                // iText cause). The merge previously also failed because the caller held the PDFs open.
+                Console.WriteLine("Exception when adding pages: " + ex);
                 return false;
             }
 
             return true;
+        }
+
+        // Read-only page count (read-only iText opens are safe — only the form-copier merge failed).
+        private static int GetPdfPageCount(string sPdfPath)
+        {
+            using (var reader = new PdfReader(sPdfPath))
+            using (var doc = new iText.Kernel.Pdf.PdfDocument(reader))
+                return doc.GetNumberOfPages();
+        }
+
+        // True when the PDF carries a document-level AcroForm with at least one field
+        // (a fillable catalog). Checks the catalog /AcroForm /Fields dictionary DIRECTLY and does
+        // NOT walk the field tree, so it stays safe even on a PDF whose field hierarchy is malformed.
+        private static bool PdfHasAcroForm(string sPDF)
+        {
+            try
+            {
+                using (var reader = new PdfReader(sPDF))
+                using (var doc = new iText.Kernel.Pdf.PdfDocument(reader))
+                {
+                    var acro = doc.GetCatalog().GetPdfObject().GetAsDictionary(PdfName.AcroForm);
+                    var fields = acro?.GetAsArray(PdfName.Fields);
+                    return fields != null && fields.Size() > 0;
+                }
+            }
+            catch { return false; }
+        }
+
+        // Removes duplicate entries from the document-level /AcroForm /Fields array, keeping the
+        // first reference to each distinct field object.
+        //
+        // WHY this is needed: cpdf replaces a page by splitting the document into page ranges and
+        // CONCATENATING them. The AcroForm is a DOCUMENT-LEVEL object, so BOTH split halves carry
+        // the full /Fields array; cpdf's concat appends both -> /Fields roughly DOUBLES on every
+        // replace (2^n growth). After ~7 replaces the Frontier catalog reached 224,252 entries for
+        // only 1,812 distinct fields (128x). iText then chokes building that many field entries when
+        // it loads the form to fill it (PdfAcroForm.GetAcroForm -> PopulateFormFieldsMap -> ...),
+        // throwing/StackOverflowing -- which is uncatchable and crashed the whole viewer process,
+        // so order PDFs stopped generating (Frontier orders stopped 2026-06-15).
+        //
+        // This operates on the RAW /Fields PdfArray by indirect reference and never calls
+        // GetAcroForm, so it does not walk the field tree and is safe to run even on an
+        // already-bloated PDF (it heals it). Returns true if it ran (even when nothing was removed).
+        private static bool DedupAcroFormFields(string sPDF)
+        {
+            string dir = System.IO.Path.GetDirectoryName(sPDF);
+            string tempOutput = System.IO.Path.Combine(dir,
+                "temp_dedupform_" + Guid.NewGuid().ToString("N") + ".pdf");
+            try
+            {
+                int before, after;
+                using (var reader = new PdfReader(sPDF))
+                using (var writer = new PdfWriter(tempOutput))
+                using (var doc = new iText.Kernel.Pdf.PdfDocument(reader, writer))
+                {
+                    var acro = doc.GetCatalog().GetPdfObject().GetAsDictionary(PdfName.AcroForm);
+                    var fields = acro?.GetAsArray(PdfName.Fields);
+                    if (acro == null || fields == null) return false;
+
+                    before = fields.Size();
+                    var seen = new System.Collections.Generic.HashSet<string>();
+                    var keep = new PdfArray();
+                    for (int i = 0; i < fields.Size(); i++)
+                    {
+                        var o = fields.Get(i);
+                        var iref = o.GetIndirectReference();
+                        // Direct (inline) field objects cannot be safely deduped; always keep them.
+                        string key = iref != null
+                            ? iref.GetObjNumber() + "_" + iref.GetGenNumber()
+                            : "direct_" + i;
+                        if (!seen.Add(key)) continue;
+                        keep.Add(o);
+                    }
+                    after = keep.Size();
+                    if (after == before) return true;   // nothing to do
+                    acro.Put(PdfName.Fields, keep);
+                    acro.SetModified();
+                }
+                if (!System.IO.File.Exists(tempOutput)) return false;
+                System.IO.File.Move(tempOutput, sPDF, true);
+                Console.WriteLine("DedupAcroFormFields: /Fields " + before + " -> " + after + " for " + sPDF);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("DedupAcroFormFields failed: " + ex.Message);
+                try { if (System.IO.File.Exists(tempOutput)) System.IO.File.Delete(tempOutput); } catch { }
+                return false;
+            }
+        }
+
+        // Rebuilds sExistingPDF as <existing 1..start-1> <replacement pages> <existing start+count..end>
+        // via cpdf. sNewRange selects which pages of sPDFToAdd go in (null = all pages).
+        // Unique temp name: concurrent jobs on the same document directory must not collide.
+        private static bool ReplacePagesViaCpdf(string sExistingPDF, string sPDFToAdd,
+            int nStartPage, int nReplaceCount, int nExistingPageCount, string sNewRange)
+        {
+            string dir = System.IO.Path.GetDirectoryName(sExistingPDF);
+            string tempOutput = System.IO.Path.Combine(dir,
+                "temp_replace_" + Guid.NewGuid().ToString("N") + ".pdf");
+
+            int endPage = nStartPage + nReplaceCount - 1;
+            if (endPage > nExistingPageCount) endPage = nExistingPageCount;
+
+            var cpdfArgs = new System.Text.StringBuilder();
+            if (nStartPage > 1)
+                cpdfArgs.Append("\"" + sExistingPDF + "\" 1-" + (nStartPage - 1) + " ");
+            cpdfArgs.Append("\"" + sPDFToAdd + "\" " + (sNewRange == null ? "" : sNewRange + " "));
+            if (endPage < nExistingPageCount)
+                cpdfArgs.Append("\"" + sExistingPDF + "\" " + (endPage + 1) + "-end ");
+            cpdfArgs.Append("-o \"" + tempOutput + "\"");
+
+            if (!RunCpdf(cpdfArgs.ToString()))
+                return false;
+            if (!System.IO.File.Exists(tempOutput))
+            {
+                Console.WriteLine("cpdf replace produced no output file: " + tempOutput);
+                return false;
+            }
+
+            System.IO.File.Move(tempOutput, sExistingPDF, true);
+            return true;
+        }
+
+        // Runs the bundled cpdf.exe (resolved the same way PDFExtractPagesCPDF does: next to the worker
+        // exe, or under Tools\). Returns true only on exit code 0.
+        private static bool RunCpdf(string arguments)
+        {
+            string[] candidates = {
+                System.IO.Path.Combine(AppContext.BaseDirectory, "cpdf.exe"),
+                System.IO.Path.Combine(AppContext.BaseDirectory, "Tools", "cpdf.exe")
+            };
+            string exe = "cpdf.exe";
+            foreach (var c in candidates) { if (System.IO.File.Exists(c)) { exe = c; break; } }
+
+            var psi = new System.Diagnostics.ProcessStartInfo(exe, arguments)
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardError = true,
+                RedirectStandardOutput = true
+            };
+            try
+            {
+                using (var p = System.Diagnostics.Process.Start(psi))
+                {
+                    // Drain both pipes CONCURRENTLY, then kill on timeout. The old code read
+                    // stderr then stdout with blocking ReadToEnd() BEFORE WaitOrKill, which
+                    // (a) defeats the 30-min kill timeout — the thread blocks in ReadToEnd until
+                    // cpdf exits, so WaitOrKill never runs — and (b) can pipe-deadlock when cpdf
+                    // fills one buffer while we block on the other. On a huge doc (IMNASA, 1678
+                    // pages) the worker thread hung forever holding the document GET_LOCK, piling
+                    // up every later ReplacePage on that doc.
+                    var errTask = p.StandardError.ReadToEndAsync();
+                    var outTask = p.StandardOutput.ReadToEndAsync();
+                    DCJobs.ProcessUtil.WaitOrKill(p);
+                    string err = errTask.GetAwaiter().GetResult();
+                    string outp = outTask.GetAwaiter().GetResult();
+                    if (p.ExitCode != 0)
+                    {
+                        Console.WriteLine("cpdf failed (exit " + p.ExitCode + ") exe=" + exe + " args=" + arguments + " err=" + err + " out=" + outp);
+                        return false;
+                    }
+                    return true;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("cpdf launch failed (exe=" + exe + "): " + ex);
+                return false;
+            }
         }
 
         /*
@@ -1750,9 +1944,10 @@ namespace JobWorker
             ElasticSearchEngine oElasticSearchEngine = new ElasticSearchEngine(sIndexName);
             oElasticSearchEngine.createIndex(sIndexName);
 
-            //Delete the document if already exists.
-            oElasticSearchEngine.deleteDocument(sIndexName, oDocument.Id.ToString());
-            oElasticSearchEngine.addDocument(sIndexName, oDocument);
+            // Non-destructive upsert (no blind pre-delete). addDocument purges stale pages only after a
+            // fully-successful index and returns false (leaving existing data intact) on any failure.
+            if (!oElasticSearchEngine.addDocument(sIndexName, oDocument))
+                Console.WriteLine($"# indexDocument: OpenSearch index incomplete for doc {oDocument.Id} (index {sIndexName}); existing index left unchanged");
         }
 
         static public bool createTextFiles(ApplicationDbContext context, document oDocument)
@@ -2094,9 +2289,14 @@ namespace JobWorker
 
             using var p = Process.Start(psi);
 
-            string stdout = p.StandardOutput.ReadToEnd();
-            string stderr = p.StandardError.ReadToEnd();
-            p.WaitForExit();
+            // Drain both pipes CONCURRENTLY, then kill on timeout (same fix as RunCpdf): the old
+            // blocking ReadToEnd() before WaitOrKill defeats the 30-min kill timeout and can
+            // pipe-deadlock on a large doc, hanging the worker thread (PDFUtils on a 1678-page doc).
+            var outTask = p.StandardOutput.ReadToEndAsync();
+            var errTask = p.StandardError.ReadToEndAsync();
+            DCJobs.ProcessUtil.WaitOrKill(p);
+            string stdout = outTask.GetAwaiter().GetResult();
+            string stderr = errTask.GetAwaiter().GetResult();
 
             // Log these somewhere you can see them:
             File.AppendAllText(@"C:\DCatalog\JobWorker\logs\pdfutils_out.log", stdout);

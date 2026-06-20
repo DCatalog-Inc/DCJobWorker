@@ -98,7 +98,6 @@ namespace JobWorker.Jobs
             document oDocument = null;
             string sSourceBucket = Constants.DEFAULT_DOCS_LOCATION;
             var crc32 = new System.IO.Hashing.Crc32();
-            FileStream fs = null;
             uint hash = 0;
             string sNewFileNameUploaded = Guid.NewGuid().ToString() + ".pdf";
             //bool bUsingCopy = false;
@@ -111,7 +110,11 @@ namespace JobWorker.Jobs
                     oDocument = oReplacePageInput.Document;
                     oDocument.DocumentProcessedBy = "DCJobWorker@" + Environment.MachineName;
                     sFullPDFFileName = oReplacePageInput.InputFileName;
-                    sOutputDirectory = oReplacePageInput.OutputDirectory;
+                    // input.OutputDirectory is computed by the ADMIN from the shared
+                    // serversettings RepositoryLocation (D:\DCatalog\Docs — the legacy
+                    // DocProcessor layout). This box has no D: drive; stage everything
+                    // under the worker's own repository path instead.
+                    sOutputDirectory = DocumentUtilBase.getDocumentPath(oDocument);
                     bReplacePDFForDownload = oReplacePageInput.replacedownloadPDF;
                     sBucketName = oReplacePageInput.bucketname;
                     sFullPDFFileUrl = oReplacePageInput.PDFFileUrl;
@@ -145,7 +148,10 @@ namespace JobWorker.Jobs
 
                 if (sFullPDFFileUrl != "")
                 {
-                    string sDownloadDir = Path.GetDirectoryName(sFullPDFFileName);
+                    // input.InputFileName points at the ADMIN's upload location — also not
+                    // valid on this box. The uploaded page PDF is fetched from S3 anyway,
+                    // so stage it in the local document directory (created above).
+                    string sDownloadDir = sOutputDirectory;
                     if (!Directory.Exists(sDownloadDir))
                     {
                         _logger.LogDebug("Directory does not exists... creating directory: " + sDownloadDir);
@@ -218,18 +224,18 @@ namespace JobWorker.Jobs
                         }
                         catch (Exception)
                         {
-                            //The file is being used 
+                            //The file is being used — work on a copy instead.
                             string sNewFileName = sExistingFile.Replace(".pdf", Guid.NewGuid().ToString() + ".pdf");
                             File.Copy(sExistingFile, sNewFileName, true);
                             sExistingFile = sNewFileName;
                             hash = DCPageManager.GetCrc32(sExistingFile);
                             if (oDocument.crc32 == hash && hash != 0)
                                 CRCMatch = true;
-                            fs.Close();
-                            //bUsingCopy = true;
+                            // (legacy fs.Close() removed — fs was never assigned here; GetCrc32 is
+                            // self-contained, and the null call killed the job on every file lock)
 
                         }
-                        //Check the file CRC32 
+                        //Check the file CRC32
 
                     }
                     if (!CRCMatch)
@@ -269,13 +275,15 @@ namespace JobWorker.Jobs
                     //if ((oDocument.Publication.Publisher.ConvertSettings.CompressPDFOptions &(int)Constants.GeneralConverFlags.REPLACEONLYSELECTEDPAGE) >1)
                     if (bUploadedCompletePDF)
                     {
-                        DocumentConvertor.replacePageInPDFHD(oReplacePageInput.pagenumber, sExistingFile, sNewFileNameUploaded);
+                        if (!DocumentConvertor.replacePageInPDFHD(oReplacePageInput.pagenumber, sExistingFile, sNewFileNameUploaded))
+                            throw new Exception("Replacing page " + oReplacePageInput.pagenumber + " in the PDF failed (cpdf/HD path) — see worker log");
                         nNumberOfPagesToReplace = 1;
                     }
                     else
                     {
                         nNumberOfPagesToReplace = nNumberOfPagesUploaded;
-                        DocumentConvertor.replacePageInPDFEx(oReplacePageInput.pagenumber, sExistingFile, sNewFileNameUploaded);
+                        if (!DocumentConvertor.replacePageInPDFEx(oReplacePageInput.pagenumber, sExistingFile, sNewFileNameUploaded))
+                            throw new Exception("Replacing page " + oReplacePageInput.pagenumber + " in the PDF failed (cpdf) — see worker log");
                     }
                     //End new code.
                     //Also generate the thumbnails
@@ -358,8 +366,7 @@ namespace JobWorker.Jobs
                             hash = DCPageManager.GetCrc32(sExistingFile);
                             if (oDocument.crc32 == hash)
                                 CRCMatch = true;
-                            fs.Close();
-                            //bUsingCopy = true;
+                            // (legacy fs.Close() removed — fs was never assigned here)
                         }
                         oDocument.crc32 = hash;
                         oDocument.DocumentProgressingPercent = oJob.Progress = 50;
@@ -499,8 +506,9 @@ namespace JobWorker.Jobs
                 _context.Update(oDocument);
                 _context.SaveChanges();
 
-
-                _logger.LogError("Error Executing Job " + e.Message);
+                _logger.LogError(e, "ReplacePages failed for job {JobId}", oJob?.Id);
+                // _logger may be a NullLogger depending on the caller — stdout is always captured.
+                Console.WriteLine("ReplacePages failed for job " + oJob?.Id + ": " + e);
 
             }
 
@@ -547,13 +555,23 @@ namespace JobWorker.Jobs
             string sBucketName = oaddpagesinput.bucketname;
             string sFileToAdd = oaddpagesinput.filename;
 
-
+            // The EXISTING document files (PDF, document.json, page files) must be present locally for
+            // init()/RenameFiles below. On the SQS worker the per-job local dir is empty, so download the
+            // whole doc first (delete does this via downloadFilesForDelete). downloadFiles() cleans +
+            // repopulates the dir, so it MUST run before the file-to-add is downloaded into it.
+            UpdateProgress(oaddpagesinput.Job, 10);
+            string sDocBucket = string.IsNullOrEmpty(oDocument.Publication?.Publisher?.BucketName)
+                ? Constants.DEFAULT_DOCS_LOCATION : oDocument.Publication.Publisher.BucketName;
+            downloadFiles(oDocument, sDocBucket);
+            UpdateProgress(oaddpagesinput.Job, 20);
 
             string sOutputDirectory = DocumentUtilBase.getDocumentPath(oDocument);
 
-           
+
             string sDocumentPath = DocumentUtilBase.getDocumentPath(oDocument);
             string sPDFFileName = Path.Combine(sDocumentPath, oDocument.PDFFileName);
+            if (!File.Exists(sPDFFileName))
+                throw new Exception("Existing document PDF missing after download: " + sPDFFileName);
             string sFileToAddName = Guid.NewGuid().ToString() + ".pdf";
             string sNewPDFFile = Path.Combine(sDocumentPath, sFileToAddName);
             DCS3Services oDCS3Services = new DCS3Services();
@@ -566,16 +584,30 @@ namespace JobWorker.Jobs
             DCJobs.DocumentConvertor oDocumentConvertor2 = new DCJobs.DocumentConvertor(_logger);
             oDocumentConvertor2.init(sNewPDFFile);
             int nPageToAddCount = oDocumentConvertor2.getNumberOfPages();
+            oDocumentConvertor2.release();   // free the file-to-add handle BEFORE the merge re-opens/deletes it
+            if (nPageToAddCount < 1)
+                throw new Exception("Uploaded PDF unreadable (encrypted/damaged?): " + sFileToAdd);
             DCJobs.DocumentConvertor oDocumentConvertor = new DCJobs.DocumentConvertor(_logger);
             oDocumentConvertor.init(sPDFFileName);
             int nPageCount = oDocumentConvertor.getNumberOfPages();
-            oDocumentConvertor.AddPagesToPDF(nPageNumber, sPDFFileName, sNewPDFFile, bAddafter);
-            oDocumentConvertor2.release();
-            File.Delete(sNewPDFFile);
+            oDocumentConvertor.release();    // free the existing-PDF handle BEFORE the merge deletes/replaces it
+            if (nPageCount < 1)
+                throw new Exception("Existing document PDF unreadable: " + sPDFFileName);
+            // Hold NO PDF file handles here: AddPagesToPDF re-opens both PDFs and replaces the
+            // existing one (release() above now truly closes the iText readers).
+            // Merge via the worker's cpdf-backed AddPagesToPDF (JobWorker.DocumentConvertor in
+            // PDFConverter.cs) — the DCJobs iText PdfPageFormCopier merge throws a contentless
+            // "Unknown PdfException" on catalog PDFs with AcroForms. The cpdf rewrite previously
+            // existed only in JobWorker.DocumentConvertor, which this method never called.
+            JobWorker.DocumentConvertor oMergeConvertor = new JobWorker.DocumentConvertor();
+            if (!oMergeConvertor.AddPagesToPDF(nPageNumber, sPDFFileName, sNewPDFFile, bAddafter))
+                throw new Exception("AddPagesToPDF failed merging '" + sFileToAdd + "' into " + oDocument.PDFFileName);
+            try { File.Delete(sNewPDFFile); } catch { }
+            UpdateProgress(oaddpagesinput.Job, 35);   // pages merged into PDF
             if (bAddafter)
                 nPageNumber++;
             oDocumentConvertor.RenameFiles(nPageNumber, oDocument, sOutputDirectory, nPageToAddCount, bAddafter);
-            oDocumentConvertor.release();
+            UpdateProgress(oaddpagesinput.Job, 50);   // existing page files shifted
             DCJobs.DocumentConvertor oDocumentConvertor3 = new DCJobs.DocumentConvertor(_logger); //Todo reopen document instead
             oDocumentConvertor3.init(sPDFFileName);
             string docfilepath = Path.Combine(sOutputDirectory, "document.json");
@@ -625,7 +657,12 @@ namespace JobWorker.Jobs
                 {
                     arrVersions.Add(jpageversion.Value);
                     JValue jpageversionNext = (JValue)pagetokenindocnext["@attributes"]["version"];
-                    jpageversion.Value = string.Format("{0}", System.Convert.ToInt32(jpageversionNext.Value) + 1);
+                    // version strings are not always Int32 (older docs carry tick-derived or
+                    // empty values) — Convert.ToInt32 threw and failed the whole job. Bump when
+                    // numeric, otherwise restamp tick-based like the old processor.
+                    jpageversion.Value = long.TryParse(System.Convert.ToString(jpageversionNext.Value), out long nVer)
+                        ? (nVer + 1).ToString()
+                        : (DateTime.Now.Ticks % int.MaxValue).ToString();
                 }
 
             }
@@ -679,10 +716,10 @@ namespace JobWorker.Jobs
 
                 new_page["@attributes"] = new JObject();
                 new_page["@attributes"]["id"] = Guid.NewGuid().ToString();
-                if (arrVersions.Count > i)
+                // same non-numeric-version tolerance as the shift loop above
+                if (arrVersions.Count > i && long.TryParse(System.Convert.ToString(arrVersions[i]), out long nPrevVer))
                 {
-                    int nNextVersion = System.Convert.ToInt32(arrVersions[i]) + 1;
-                    new_page["@attributes"]["version"] = arrVersions.Count > i ? nNextVersion.ToString() : "1"; //Need to check
+                    new_page["@attributes"]["version"] = (nPrevVer + 1).ToString();
                 }
                 else
                 {
@@ -751,11 +788,8 @@ namespace JobWorker.Jobs
             //PDF2HTML.convertAllPagesCommandLine(sPDFFileName, sDocumentPath, sHTMLOutputDirectory);
             oDocument.NumberOfPages = oDocument.NumberOfPages + nPageToAddCount;
             updateTOCLinks(oDocument, nPageNumber, nPageToAddCount);
+            UpdateProgress(oaddpagesinput.Job, 75);   // new-page images + HTML regenerated
 
-                //Update document.json.
-
-
-            
             return true;
         }
 
@@ -1027,15 +1061,51 @@ namespace JobWorker.Jobs
                  .Include(r => r.Job)
                  .Where(p => p.Id == sdeletepagesinput)
                  .FirstOrDefault();
-                DeletePages(odeletepagesinput);
- 
+                bool delOk = DeletePages(odeletepagesinput);
+
+                document oDocumentDiag = odeletepagesinput.Document;
+                // DIAGNOSTIC (readable via DB; JobProcessor overwrites job.Desctiption but not the
+                // input row): record what the worker actually produced locally — the renumbered page
+                // count + the id now at sequence 2. Lets us tell an internal renumber failure apart
+                // from an external overwrite of the corrected document.json.
+                try
+                {
+                    string djp = Path.Combine(DocumentUtilBase.getDocumentPath(oDocumentDiag), "document.json");
+                    if (File.Exists(djp))
+                    {
+                        JObject djj = JObject.Parse(File.ReadAllText(djp));
+                        JArray djpages = (JArray)djj["issue"]["page"];
+                        JToken p2 = djpages.FirstOrDefault(x => (string)x["@attributes"]["sequence"] == "2");
+                        string seq2id = p2 != null ? (string)p2["@attributes"]["id"] : "missing";
+                        odeletepagesinput.Description = (odeletepagesinput.Description ?? "") + $" || POST delOk={delOk} npages={oDocumentDiag.NumberOfPages} jsonpages={djpages.Count} seq2id={seq2id}";
+                    }
+                    else
+                        odeletepagesinput.Description = $"DEL delOk={delOk} LOCAL document.json MISSING";
+                    _context.Update(odeletepagesinput);
+                    _context.SaveChanges();
+                }
+                catch (Exception dex)
+                {
+                    odeletepagesinput.Description = "DEL diag-err: " + dex.Message;
+                    _context.Update(odeletepagesinput);
+                    _context.SaveChanges();
+                }
+
+                if (!delOk)
+                {
+                    job oJobFail = odeletepagesinput.Job;
+                    oJobFail.Status = Constants.JobProcessingStatus.Failed.ToString();
+                    oJobFail.Desctiption = "Delete pages failed (PDF edit returned false / aborted)";
+                    _context.Update(oJobFail);
+                    _context.SaveChanges();
+                    return false;
+                }
+
                 job oJob =  odeletepagesinput.Job;
-                oJob.Progress = 60;
-                oJob.Status = Constants.JobProcessingStatus.Processing.ToString();
-                _context.Update(oJob);
                 //3. Upload files
                 document oDocument = odeletepagesinput.Document;
                 updateDocument(oDocument);
+                UpdateProgress(oJob, 85);   // uploaded to S3
 
                 string sDocumentPath = DocumentUtilBase.getDocumentPath(oDocument);
                 string sPDFFileName = Path.Combine(sDocumentPath, oDocument.PDFFileName);
@@ -1052,7 +1122,11 @@ namespace JobWorker.Jobs
                 
 
                 DCJobs.DocumentConvertor.indexDocument(_context, oDocument);
-                DCJobs.DocumentConvertor.createTextFiles(_context, oDocument).GetAwaiter().GetResult();
+                UpdateProgress(oJob, 95);   // re-indexed in OpenSearch
+                // NOTE: DeletePages already regenerated the page HTML (convertAllPagesMuPDF) and that
+                // output was what updateDocument uploaded and indexDocument indexed. Calling
+                // createTextFiles here re-rendered the ENTIRE document's HTML a second time AFTER the
+                // upload+index — wasted work that doubled the delete time. Removed.
 
                 oJob.Progress = 100;
                 oJob.Status = Constants.JobProcessingStatus.Completed.ToString();
@@ -1171,7 +1245,9 @@ namespace JobWorker.Jobs
 
             //1. Download files.
             string sBucketName = Constants.DEFAULT_DOCS_LOCATION;
-            downloadFilesForDelete(oDocument, sBucketName, nFromPage, nToPage);
+            UpdateProgress(odeletepagesinput.Job, 5);    // started — move off 0 immediately
+            downloadFilesForDelete(oDocument, sBucketName, nFromPage, nToPage, odeletepagesinput.Job);
+            UpdateProgress(odeletepagesinput.Job, 15);   // files downloaded
             if (checkJobStatus(odeletepagesinput.Job, "Download Files") == false)
                 return false;
 
@@ -1181,20 +1257,30 @@ namespace JobWorker.Jobs
             int nNumberOfPagesToRemove = nToPage - nPageNumber + 1;
 
             int nPDFPageCount = oDocument.NumberOfPages;
-            PDFExtractPagesCPDF e2 = new PDFExtractPagesCPDF(_logger);
-            string sRange = PDFExtractPagesCPDF.getDeleteCommand(nPageNumber, nNumberOfPagesToRemove, nPDFPageCount);
 
-            e2.PDFSourceFileName = sPDFFileName;
-            e2.Range = sRange;
-            e2.OutputDir = sDocumentPath;
-            //string sFileName = string.Format("Page_{0}.pdf", e2.Range);
-            string outputfile = Path.Combine(e2.OutputDir, oDocument.PDFFileName);
-            e2.PDFTargetFileName = outputfile;
-            bRet = e2.Execute();
+            // PDFTron in-place first: removes the pages without re-extracting the whole document
+            // like the cpdf range-cut below does, so it scales to very large docs and preserves the
+            // AcroForm. cpdf fallback if the tool is unavailable or the in-place remove fails.
+            bRet = JobWorker.DocumentConvertor.RemovePagesViaPdfUtils(sPDFFileName, nPageNumber, nNumberOfPagesToRemove);
+            if (!bRet)
+            {
+                Console.WriteLine("DeletePages: PDFUtils path unavailable/failed, falling back to cpdf");
+                PDFExtractPagesCPDF e2 = new PDFExtractPagesCPDF(_logger);
+                string sRange = PDFExtractPagesCPDF.getDeleteCommand(nPageNumber, nNumberOfPagesToRemove, nPDFPageCount);
 
-           
+                e2.PDFSourceFileName = sPDFFileName;
+                e2.Range = sRange;
+                e2.OutputDir = sDocumentPath;
+                //string sFileName = string.Format("Page_{0}.pdf", e2.Range);
+                string outputfile = Path.Combine(e2.OutputDir, oDocument.PDFFileName);
+                e2.PDFTargetFileName = outputfile;
+                bRet = e2.Execute();
+            }
+            UpdateProgress(odeletepagesinput.Job, 25);   // PDF cut done
+
             DCJobs.DocumentConvertor oDocumentConvertor = new DCJobs.DocumentConvertor(_logger);
             oDocumentConvertor.RenameFilesDelete(nPageNumber, oDocument, sOutputDirectory, nNumberOfPagesToRemove);
+            UpdateProgress(odeletepagesinput.Job, 40);   // page files shifted
 
             string docfilepath = Path.Combine(sOutputDirectory, "document.json");
             JObject docJson = JObject.Parse(System.IO.File.ReadAllText(docfilepath));
@@ -1276,19 +1362,35 @@ namespace JobWorker.Jobs
             IEnumerable<JToken> bookmarksitems = docJson.SelectTokens(selectsequence);
             updateBookmarksRemove(bookmarksitems, nPageNumber, nNumberOfPagesToRemove);
 
+            // Persist the renumbered document.json + page count IMMEDIATELY (the page files were
+            // already renamed by RenameFilesDelete). Doing this before any early-exit guarantees the
+            // document structure/labels always match the shifted files — bailing here previously left
+            // the doc half-edited (files shifted, document.json/labels not), which is the page-number
+            // + search-highlight mismatch we saw.
+            int afterLoopPageCount = ((JArray)docJson["issue"]["page"]).Count;
+            System.IO.File.WriteAllText(docfilepath, docJson.ToString());
+            // INTERNAL instrumentation (read via deletepagesinput.Description): pinpoints whether the
+            // renumber loop actually shifted. loopBound = oDocument.NumberOfPages at loop start.
+            try
+            {
+                odeletepagesinput.Description = $"INT loopBound={nPageCount} pdfPageCount={nPDFPageCount} fromPg={nPageNumber} remove={nNumberOfPagesToRemove} afterLoopPages={afterLoopPageCount} cpdfOk={bRet}";
+                _context.Update(odeletepagesinput);
+                _context.SaveChanges();
+            }
+            catch { }
+            oDocument.NumberOfPages = oDocument.NumberOfPages - nNumberOfPagesToRemove;
+            updateTOCLinksRemove(oDocument, nPageNumber, nNumberOfPagesToRemove);
+            _context.Update(oDocument);
 
             if (checkJobStatus(odeletepagesinput.Job, "Before index document") == false)
                 return false;
 
-
             //Update goto page links.
-            System.IO.File.WriteAllText(docfilepath, docJson.ToString());
+            UpdateProgress(odeletepagesinput.Job, 50);   // document.json renumbered + saved
             string sHTMLOutputDirectory = Path.Combine(sOutputDirectory, "html");
             SearchHighligh.deleteDocument(_context,oDocument.Id.ToString());
             PDF2HTML.convertAllPagesMuPDF(sPDFFileName, sOutputDirectory, sHTMLOutputDirectory);
-            oDocument.NumberOfPages = oDocument.NumberOfPages - nNumberOfPagesToRemove;
-            updateTOCLinksRemove(oDocument, nPageNumber, nNumberOfPagesToRemove);
-            _context.Update(oDocument);
+            UpdateProgress(odeletepagesinput.Job, 70);   // page HTML/images regenerated
             return bRet;
         }
 
@@ -1371,6 +1473,21 @@ namespace JobWorker.Jobs
                 }
 
             }
+        }
+
+        // Persists incremental job progress so the admin progress modal (polling
+        // /Progress/checkJobStatus) advances during the multi-step delete instead of sitting at one %.
+        private void UpdateProgress(job oJob, int pct)
+        {
+            try
+            {
+                if (oJob == null) return;
+                oJob.Progress = pct;
+                oJob.Status = Constants.JobProcessingStatus.Processing.ToString();
+                _context.Update(oJob);
+                _context.SaveChanges();
+            }
+            catch { /* progress is best-effort; never fail the job over it */ }
         }
 
         public bool checkJobStatus(job oJob,string step)
@@ -1508,7 +1625,7 @@ namespace JobWorker.Jobs
             oDCS3Services.uploadDirectory(sBucketName, sOutputDirectory, sKeyPrefix);
             return true;
         }
-        public bool downloadFilesForDelete(document oDocument, string sBucketName, int nFromPage, int nToPage)
+        public bool downloadFilesForDelete(document oDocument, string sBucketName, int nFromPage, int nToPage, job oProgressJob = null)
         {
             //PDF,Image,Jpg,json,Svg?
 
@@ -1589,8 +1706,14 @@ namespace JobWorker.Jobs
             int nNumberOfPagesToRemove = nToPage - nPageNumber + 1;
 
             int nPageCount = oDocument.NumberOfPages;
+            int nDownloadTotal = Math.Max(1, nPageCount - nPageNumber);
+            int nProgressStep = Math.Max(1, nDownloadTotal / 10);
             for (int i = 0; i < nPageCount - nPageNumber; i++)
             {
+                // Crawl the bar from 5..14 across the (potentially long) per-page download so it
+                // doesn't sit at 0 while ~4 files/page are pulled from S3.
+                if (oProgressJob != null && i % nProgressStep == 0)
+                    UpdateProgress(oProgressJob, 5 + (int)((double)i / nDownloadTotal * 9));
                 int nCurrentPage = nPageNumber + nNumberOfPagesToRemove + i;
                 int nNewCurrentPage = nPageNumber + i;
                 string sName = string.Format("Page_{0}.json", nCurrentPage);

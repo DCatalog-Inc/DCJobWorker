@@ -245,6 +245,20 @@ namespace JobWorker.Jobs
 
         }
 
+        // Swap the admin's RepositoryLocationDB prefix (D:\DCatalog\Docs — legacy disk layout
+        // written into input rows) for this worker's local RepositoryLocation (C:\DCatalog\Docs)
+        // when present, so admin-authored paths resolve on this box.
+        private static string LocalizeRepoPath(string p)
+        {
+            if (string.IsNullOrEmpty(p)) return p;
+            string db = DCCommon.Instance.RepositoryLocationDB;
+            string local = DCCommon.Instance.RepositoryLocation;
+            if (!string.IsNullOrEmpty(db) && !string.IsNullOrEmpty(local) &&
+                p.StartsWith(db, StringComparison.OrdinalIgnoreCase))
+                return local + p.Substring(db.Length);
+            return p;
+        }
+
 
         public async Task<bool> ExecuteAsync(job oJob, CancellationToken ct = default)
         {
@@ -484,7 +498,14 @@ namespace JobWorker.Jobs
                         oDocument.DocumentProgressingPercent = 70;
                         int nNumberOfPages = Math.Min(6, oDocument.NumberOfPages);
                         GifFlippingBookCreator oGifFlippingBookCreator = new GifFlippingBookCreator();
-                        oGifFlippingBookCreator.CreateGifFlippingBook(oGifInput.Width, oDocumentConvertor.FirstThumbHeight, oGifInput.Ratio, oGifInput.BackGroundColor, oGifInput.FlipInterval, oGifInput.Prefix, oGifInput.Postfix, nNumberOfPages, oGifInput.InputDirectory, oGifInput.OutputDirectory, oGifInput.GifFileName);
+                        // The admin writes these dirs in its own RepositoryLocationDB layout
+                        // (D:\DCatalog\Docs — the legacy disk). This worker's repo is C:\DCatalog\Docs,
+                        // so localize before the GIF creator's CreateDirectory blows up with
+                        // "Could not find a part of the path 'D:\...'" (the Jafra failure). Every
+                        // other sub-input in this flow is already pinned to sOutputDirectory.
+                        string sGifInputDir = string.IsNullOrEmpty(oGifInput.InputDirectory) ? sOutputDirectory : LocalizeRepoPath(oGifInput.InputDirectory);
+                        string sGifOutputDir = string.IsNullOrEmpty(oGifInput.OutputDirectory) ? sOutputDirectory : LocalizeRepoPath(oGifInput.OutputDirectory);
+                        oGifFlippingBookCreator.CreateGifFlippingBook(oGifInput.Width, oDocumentConvertor.FirstThumbHeight, oGifInput.Ratio, oGifInput.BackGroundColor, oGifInput.FlipInterval, oGifInput.Prefix, oGifInput.Postfix, nNumberOfPages, sGifInputDir, sGifOutputDir, oGifInput.GifFileName);
                     }
 
 
