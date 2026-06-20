@@ -9,3 +9,6 @@ publish/
 bundle-*/
 publish-*/
 .rbdepid
+
+# keep the patched PDFUtils.exe (page-insert fix) tracked so every machine has it
+!Tools/PDFUtils/PDFUtils.exe
