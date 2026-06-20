@@ -78,7 +78,11 @@ Write-Host "  ok ($m)"
 Step "4/8  Publishing SELF-CONTAINED (win-x64)"
 $pub = Join-Path $dcw 'publish-deploy'
 if (Test-Path $pub) { Remove-Item $pub -Recurse -Force }
-& dotnet publish (Join-Path $dcw 'JobWorker.csproj') -c Release -r win-x64 --self-contained true -o $pub | Out-Null
+# NOTE: call dotnet.exe explicitly and DO NOT pipe to Out-Null. On this box an
+# extensionless C:\WINDOWS\system32\dotnet exists; `& dotnet ... | Out-Null`
+# makes PowerShell resolve that as a *document* mid-pipeline and abort
+# ("Cannot run a document in the middle of a pipeline"). Redirect to $null instead.
+& dotnet.exe publish (Join-Path $dcw 'JobWorker.csproj') -c Release -r win-x64 --self-contained true -o $pub *> $null
 if ($LASTEXITCODE -ne 0) { Fail 'dotnet publish failed' }
 
 Step "5/8  Validating the published output is COMPLETE"
