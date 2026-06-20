@@ -614,6 +614,35 @@ namespace JobWorker.Jobs
                         oDocument.IsActive = false;
                     }
 
+                    // Subscription-quota gate -- parity with the legacy DocProcessor's checkDocumentLicense:
+                    // an edition stays active only if the publisher is within their license quota. "Used" =
+                    // their completed/active/non-deleted editions published within the current license period;
+                    // EvaluateBy==1 is page-metered (Total must cover used pages + this doc), else
+                    // edition-metered (Total must exceed used editions). The new worker tracked Used++ but
+                    // never enforced it, so over-quota editions could still auto-activate (the gap reported).
+                    if (oDocument.IsActive && oDocument.Publication.Publisher.Licenses.Count > 0)
+                    {
+                        var oLic = oDocument.Publication.Publisher.Licenses[0];
+                        var qUsed = context.document.Where(d =>
+                            d.Publication.Publisher_id == oDocument.Publication.Publisher.Id
+                            && d.DocumentStatus == Constants.JobProcessingStatus.Completed.ToString()
+                            && d.IsActive && !d.Deleted && d.Id != oDocument.Id
+                            && d.PublishDate >= oLic.CreateDate && d.PublishDate <= oLic.EndDate);
+                        long nUsed = oLic.EvaluateBy == 1
+                            ? (await qUsed.SumAsync(d => (long?)d.NumberOfPages) ?? 0L)
+                            : await qUsed.CountAsync();
+                        bool bWithinQuota = oLic.EvaluateBy == 1
+                            ? oLic.Total >= nUsed + oDocument.NumberOfPages
+                            : oLic.Total > nUsed;
+                        if (!bWithinQuota)
+                        {
+                            _log.LogInformation("ConvertPDF: deactivating doc {Doc} - over subscription quota (used {Used}/{Total}, EvaluateBy {Eval})",
+                                oDocument.Id, nUsed, oLic.Total, oLic.EvaluateBy);
+                            oDocument.IsActive = false;
+                            oDocument.DocumentProcessingDescription = "Out of subscription count. Toggle a previous edition inactive to activate this one.";
+                        }
+                    }
+
                     if (oPublisher.ConvertSettings?.AddProductsLinksFromDB == true)
                     {
                         SearchProductsInDocument(context,oDocument);
