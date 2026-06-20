@@ -1862,6 +1862,21 @@ namespace JobWorker
 
                 double dPageWidth = PageSize.GetWidth();
                 double dPageHeight = PageSize.GetHeight();
+
+                // GetPageSize() returns the raw MediaBox and ignores the page's /Rotate.
+                // The rasterizer applies /Rotate when rendering the JPGs, so a page with
+                // /Rotate 90 or 270 is rendered with its width/height swapped relative to
+                // the MediaBox. Mirror that here so the recorded page dimensions match the
+                // actual images; otherwise a rotated page gets a portrait box around a
+                // landscape image (or vice versa) and renders distorted in the viewer.
+                int nRotation = oPage.GetRotation();
+                if (nRotation == 90 || nRotation == 270)
+                {
+                    double dSwap = dPageWidth;
+                    dPageWidth = dPageHeight;
+                    dPageHeight = dSwap;
+                }
+
                 double dHiRatio = dHiImageRes / 72.0;
                 double dNormalRatio = dNormalImageRes / 72.0;
                 /*
