@@ -1153,9 +1153,16 @@ namespace JobWorker
                     oLink.x1 = getCordinate(result[0], LinksRatio);
                     oLink.x2 = getCordinate(getCordinate(result[2], LinksRatio), oLink.x1);
                 }
-                oLink.type = oPageLink.Attributes["linktype"].Value;
+                oLink.type = oPageLink.Attributes["linktype"] != null ? oPageLink.Attributes["linktype"].Value : "0";
 
-                oLink.description = oPageLink.Attributes["text"].Value;
+                // Guard the "text" read: email/mailto links written by the link extractor
+                // (PDFTronUtils mailto branch) have NO "text" attribute, so this used to throw a
+                // NullReferenceException that was swallowed by the caller (line ~376) and emptied
+                // the WHOLE page's link JSON -- dropping every link on any page containing an email
+                // link. Fall back to the url (matches how URL links set description = url).
+                oLink.description = oPageLink.Attributes["text"] != null
+                    ? oPageLink.Attributes["text"].Value
+                    : (oPageLink.Attributes["url"] != null ? oPageLink.Attributes["url"].Value : "");
                 if (oPageLink.Attributes["playonhover"] != null)
                     oLink.hover = oPageLink.Attributes["playonhover"].Value == "true" ? "1" : "0";
                 else
