@@ -602,13 +602,13 @@ namespace JobWorker.Jobs
                         oJobExecutionRecognizeLinks.recognizeLinksFromLocal(oRecognizelinksinput);
                     }
 
-                    if (oDocument.NumberOfPages > 200 && (oDocument.Publication.Publisher.Licenses[0].LicenseType == Constants.ProductType.Trial.ToString() || oDocument.Publication.Publisher.Licenses[0].LicenseType == Constants.ProductType.Select.ToString()))
+                    if (oDocument.Publication.Publisher.Licenses.Count > 0 && oDocument.NumberOfPages > 200 && (oDocument.Publication.Publisher.Licenses[0].LicenseType == Constants.ProductType.Trial.ToString() || oDocument.Publication.Publisher.Licenses[0].LicenseType == Constants.ProductType.Select.ToString()))
                     {
                         oDocument.DocumentProcessingWarning = (int)Constants.DocumentProcessingWarning.TrialOver200Pages;
                         oDocument.IsActive = false;
                     }
 
-                    if (oDocument.NumberOfPages > 500 && (oDocument.Publication.Publisher.Licenses[0].LicenseType == Constants.ProductType.Professional.ToString() || oDocument.Publication.Publisher.Licenses[0].LicenseType == Constants.ProductType.Elite.ToString()))
+                    if (oDocument.Publication.Publisher.Licenses.Count > 0 && oDocument.NumberOfPages > 500 && (oDocument.Publication.Publisher.Licenses[0].LicenseType == Constants.ProductType.Professional.ToString() || oDocument.Publication.Publisher.Licenses[0].LicenseType == Constants.ProductType.Elite.ToString()))
                     {
                         oDocument.DocumentProcessingWarning = (int)Constants.DocumentProcessingWarning.TrialOver500Pages;
                         oDocument.IsActive = false;
@@ -623,9 +623,14 @@ namespace JobWorker.Jobs
                     if (oDocument.IsActive && oDocument.Publication.Publisher.Licenses.Count > 0)
                     {
                         var oLic = oDocument.Publication.Publisher.Licenses[0];
+                        // Count the publisher's CURRENT active edition set (IsActive + not-deleted) in the
+                        // license term, excluding this doc. Intentionally NOT filtered to Completed: a
+                        // concurrent edition is IsActive from upload (before its own convert finishes), so
+                        // filtering to Completed undercounted during bursts and let the cap leak past Total
+                        // (observed: johnnytest at 20 active vs Total 19). Counting the live active set is
+                        // race-hardened and errs toward deactivating, which is the safe direction for licensing.
                         var qUsed = context.document.Where(d =>
                             d.Publication.Publisher_id == oDocument.Publication.Publisher.Id
-                            && d.DocumentStatus == Constants.JobProcessingStatus.Completed.ToString()
                             && d.IsActive && !d.Deleted && d.Id != oDocument.Id
                             && d.PublishDate >= oLic.CreateDate && d.PublishDate <= oLic.EndDate);
                         long nUsed = oLic.EvaluateBy == 1
@@ -706,7 +711,7 @@ namespace JobWorker.Jobs
                     oDocument.DocumentStatus = Constants.JobProcessingStatus.Completed.ToString();
                     oDocument.DocumentProcessingDescription = "Finished Successfully";
                     oDocument.DocumentProgressingPercent = 100;
-                    if (oDocument.IsActive)
+                    if (oDocument.IsActive && oDocument.Publication.Publisher.Licenses.Count > 0)
                     {
                         oDocument.Publication.Publisher.Licenses[0].Used++;
                     }
