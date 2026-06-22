@@ -259,6 +259,31 @@ namespace JobWorker.Jobs
             return p;
         }
 
+        // Deleting the source PDF can race the external page-conversion process
+        // (MuPDF/mutool/ESProxy), which briefly keeps the file open -> IOException
+        // "being used by another process". The handle frees within a moment, so
+        // retry with a short backoff. If it never frees, a leftover temp PDF in the
+        // per-doc folder is far less harmful than failing the whole conversion --
+        // log and move on rather than throw.
+        private void SafeDeleteFile(string path)
+        {
+            if (string.IsNullOrEmpty(path) || !File.Exists(path)) return;
+            const int maxAttempts = 12;
+            for (int attempt = 1; attempt <= maxAttempts; attempt++)
+            {
+                try { File.Delete(path); return; }
+                catch (Exception ex)
+                {
+                    if (attempt == maxAttempts)
+                    {
+                        _log.LogWarning(ex, "SafeDeleteFile gave up after {Attempts} attempts on {Path}", maxAttempts, path);
+                        return;
+                    }
+                    System.Threading.Thread.Sleep(500);
+                }
+            }
+        }
+
 
         public async Task<bool> ExecuteAsync(job oJob, CancellationToken ct = default)
         {
@@ -333,8 +358,7 @@ namespace JobWorker.Jobs
                 oDocument.DocumentProgressingPercent = 10;
                 context.Update(oDocument);
                 context.SaveChanges();
-                if (File.Exists(sPDFFile))
-                    File.Delete(sPDFFile);
+                SafeDeleteFile(sPDFFile);
                 sPDFFile = oCreateDocumentXMLInput.InputFileName;
                 if (!Directory.Exists(sOutputDirectory))
                     Utility.createDirectory(sOutputDirectory);
@@ -382,7 +406,7 @@ namespace JobWorker.Jobs
                             {
                                 oDocumentConvertor.release();
                                 //We might want to delete the origitan file.
-                                File.Delete(sPDFFile);
+                                SafeDeleteFile(sPDFFile);
                                 oDocument.PDFFileName = sCompressName;
                                 sPDFFile = Path.Combine(sOutputDirectory, oDocument.PDFFileName);
 
@@ -497,15 +521,35 @@ namespace JobWorker.Jobs
                         oDocument.DocumentProcessingDescription = oGifInput.Description;
                         oDocument.DocumentProgressingPercent = 70;
                         int nNumberOfPages = Math.Min(6, oDocument.NumberOfPages);
-                        GifFlippingBookCreator oGifFlippingBookCreator = new GifFlippingBookCreator();
-                        // The admin writes these dirs in its own RepositoryLocationDB layout
-                        // (D:\DCatalog\Docs — the legacy disk). This worker's repo is C:\DCatalog\Docs,
-                        // so localize before the GIF creator's CreateDirectory blows up with
-                        // "Could not find a part of the path 'D:\...'" (the Jafra failure). Every
-                        // other sub-input in this flow is already pinned to sOutputDirectory.
-                        string sGifInputDir = string.IsNullOrEmpty(oGifInput.InputDirectory) ? sOutputDirectory : LocalizeRepoPath(oGifInput.InputDirectory);
-                        string sGifOutputDir = string.IsNullOrEmpty(oGifInput.OutputDirectory) ? sOutputDirectory : LocalizeRepoPath(oGifInput.OutputDirectory);
-                        oGifFlippingBookCreator.CreateGifFlippingBook(oGifInput.Width, oDocumentConvertor.FirstThumbHeight, oGifInput.Ratio, oGifInput.BackGroundColor, oGifInput.FlipInterval, oGifInput.Prefix, oGifInput.Postfix, nNumberOfPages, sGifInputDir, sGifOutputDir, oGifInput.GifFileName);
+                        // The GIF mini-flipper needs at least 2 (even) images. A 1-page doc
+                        // (or any doc that can't yield 2 even images) throws
+                        // "There should be atleast 2 images and number of images should be
+                        // even in number" inside CreateGifFlippingBook. The GIF is optional
+                        // decoration -- it must NEVER fail the whole document conversion.
+                        // The legacy DocProcessor guarded this; the port had lost it (regression).
+                        if (nNumberOfPages >= 2)
+                        {
+                            try
+                            {
+                                GifFlippingBookCreator oGifFlippingBookCreator = new GifFlippingBookCreator();
+                                // The admin writes these dirs in its own RepositoryLocationDB layout
+                                // (D:\DCatalog\Docs — the legacy disk). This worker's repo is C:\DCatalog\Docs,
+                                // so localize before the GIF creator's CreateDirectory blows up with
+                                // "Could not find a part of the path 'D:\...'" (the Jafra failure). Every
+                                // other sub-input in this flow is already pinned to sOutputDirectory.
+                                string sGifInputDir = string.IsNullOrEmpty(oGifInput.InputDirectory) ? sOutputDirectory : LocalizeRepoPath(oGifInput.InputDirectory);
+                                string sGifOutputDir = string.IsNullOrEmpty(oGifInput.OutputDirectory) ? sOutputDirectory : LocalizeRepoPath(oGifInput.OutputDirectory);
+                                oGifFlippingBookCreator.CreateGifFlippingBook(oGifInput.Width, oDocumentConvertor.FirstThumbHeight, oGifInput.Ratio, oGifInput.BackGroundColor, oGifInput.FlipInterval, oGifInput.Prefix, oGifInput.Postfix, nNumberOfPages, sGifInputDir, sGifOutputDir, oGifInput.GifFileName);
+                            }
+                            catch (Exception gifEx)
+                            {
+                                _log.LogWarning(gifEx, "GIF flipping book creation skipped (non-fatal) for doc {DocId}", oDocument.Id);
+                            }
+                        }
+                        else
+                        {
+                            _log.LogInformation("GIF flipping book skipped for doc {DocId}: only {Pages} page(s), need >= 2", oDocument.Id, nNumberOfPages);
+                        }
                     }
 
 
