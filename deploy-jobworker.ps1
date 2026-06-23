@@ -2,12 +2,13 @@
   deploy-jobworker.ps1  -  reliable, validated deploy of the DCJobWorker SQS worker.
 
   Why this script exists (the failures it prevents):
-   1. WRONG BRANCH. The worker stack (DCJobWorker, core, DCJobs) deploys from
-      'search-index-hardening' - it has the full PDFTron page-op suite. 'main' has
-      historically been BEHIND it; building from main produced an incomplete worker
-      that crashed at runtime. This script syncs every repo to the correct branch
-      from ORIGIN, and WARNS if main has commits not on the deploy branch
-      (i.e. you committed to the wrong branch).
+   1. WRONG BRANCH. DCJobWorker's own code deploys from 'search-index-hardening'
+      (it has the full PDFTron page-op suite); core/DCJobs now come from the unified
+      'dotnet-8-all' (search-index-hardening was merged into it + deleted 2026-06-23).
+      'main' has historically been BEHIND; building from main produced an incomplete
+      worker that crashed at runtime. This script syncs every repo to the correct
+      branch from ORIGIN, and WARNS if DCJobWorker/main has commits not on its deploy
+      branch (i.e. you committed worker code to the wrong branch).
    2. WRONG PUBLISH MODE. The worker must be published SELF-CONTAINED. A
       framework-dependent publish drops the .NET runtime AND the ~290
       Microsoft.AspNetCore.* DLLs the box needs, so the service will not start.
@@ -32,13 +33,14 @@ $CDApp    = 'JobWorker'
 $CDGroup  = 'JobWorker-Prod'
 $PdfUtilsMd5 = '38985e7af16a02fb3f8e39722f4148f0'   # the page-insert (PageInsert iterator) fix
 
-# repo -> branch the worker build needs. core/DCJobs are SHARED with admin (which uses
-# dotnet-8-all); for the WORKER they must be search-index-hardening. PDFGenerator/FlippingBook
-# have no search-index-hardening branch.
+# repo -> branch the worker build needs. core/DCJobs were UNIFIED onto dotnet-8-all
+# 2026-06-23 (search-index-hardening merged in + deleted) so admin, jobs AND the worker
+# now all build core/DCJobs from the SAME branch. Only DCJobWorker's own code lives on
+# search-index-hardening. PDFGenerator/FlippingBook have no dotnet-8-all/sih split.
 $Branches = [ordered]@{
   'DCJobWorker'  = 'search-index-hardening'
-  'core'         = 'search-index-hardening'
-  'DCJobs'       = 'search-index-hardening'
+  'core'         = 'dotnet-8-all'
+  'DCJobs'       = 'dotnet-8-all'
   'PDFGenerator' = 'dotnet-8-all'
   'FlippingBook' = 'main'
 }
