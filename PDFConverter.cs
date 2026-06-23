@@ -1054,17 +1054,19 @@ namespace JobWorker
         public static async Task downloadDocumentFile(document oDocument, string sDirectory, string sFileName)
         {
             string sBucketName = Constants.DEFAULT_DOCS_LOCATION;
-            PostSubmitter postClient = new();
             string sPublisherName = Utility.GenerateFriendlyURL(oDocument.Publication.Publisher.Name);
             string sPublicationName = Utility.GenerateFriendlyURL(oDocument.Publication.Name);
-            string sKeyPrefix = string.Format("{0}/{1}/{2}", sPublisherName, sPublicationName,
-                oDocument.Id);
-            string sS3FileLocation = string.Format("https://s3.amazonaws.com/{0}/{1}/{2}", sBucketName,
-                sKeyPrefix, sFileName);
+            string sKey = string.Format("{0}/{1}/{2}/{3}", sPublisherName, sPublicationName,
+                oDocument.Id, sFileName);
             if (!Directory.Exists(sDirectory))
                 Directory.CreateDirectory(sDirectory);
             string sFullFileName = string.Format("{0}\\{1}", sDirectory, sFileName);
-            await postClient.DownloadFileAsync(sS3FileLocation, sFullFileName);
+            // Authenticated SDK download. This was an ANONYMOUS HTTP GET on a direct-S3 URL
+            // (https://s3.amazonaws.com/dc-docs.dcatalog.com/...) which started 403ing once
+            // dc-docs.dcatalog.com was locked private (broke IntroPage + ReplacePage). The SDK
+            // uses the worker's IAM credentials, so it works regardless of bucket public/private.
+            new DCS3Services().downloadFile(sBucketName, sKey, sFullFileName);
+            await Task.CompletedTask;
         }
 
 
