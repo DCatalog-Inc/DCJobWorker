@@ -632,8 +632,19 @@ namespace JobWorker.Jobs
                 string selectsequenceNext = "$..page[?(@..sequence=='" + i.ToString() + "')]";
                 IEnumerable<JToken> pagesection = docJson.SelectTokens(selectsequence);
                 IEnumerable<JToken> pagesectionNext = docJson.SelectTokens(selectsequenceNext);
-                JToken pagetokenindoc = pagesection.First();
-                JToken pagetokenindocnext = pagesectionNext.First();
+                // document.json can hold fewer page entries than the PDF has pages (out-of-sync doc:
+                // a prior partial page-op, or the PDF was replaced with more pages). The old code's
+                // .First() then threw "Sequence contains no elements" and failed the entire AddPages
+                // job. Skip the renumber for a sequence that has no document.json entry — matches the
+                // guarded Count()>0 pattern already used in DeletePages below.
+                JToken pagetokenindoc = pagesection.FirstOrDefault();
+                if (pagetokenindoc == null)
+                {
+                    _logger.LogWarning("AddPages: document.json has no page for sequence {Seq} (doc {DocId}; PDF pages {PdfPages}, json pages {JsonPages}) — skipping its renumber.",
+                        i, oDocument.Id, nPageCount, allpages.Count);
+                    continue;
+                }
+                JToken pagetokenindocnext = pagesectionNext.FirstOrDefault() ?? pagetokenindoc;
                 JValue jpageversion = (JValue)pagetokenindoc["@attributes"]["version"];
 
                 JValue thumb = (JValue)pagetokenindoc["@attributes"]["thumb"];
