@@ -159,7 +159,8 @@ public class PDFDetails : IDisposable
             m_pdfDocument = new PdfDocument(new PdfReader(path));
             PagesCount = m_pdfDocument.GetNumberOfPages();
 
-            Rectangle size = m_pdfDocument.GetPage(1).GetPageSize();
+            // CropBox (visible page), not the raw MediaBox — see PDFConverter.CreateDocumentXML.
+            Rectangle size = m_pdfDocument.GetPage(1).GetCropBox();
             Width = size.GetWidth();
             Height = size.GetHeight();
 

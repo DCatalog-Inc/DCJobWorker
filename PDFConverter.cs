@@ -1502,7 +1502,9 @@ namespace JobWorker
             //int nHeight = (int)oPage.Height;
 
             PdfPage oPage = _PDFDoc.GetPage(nPageNumber);
-            iText.Kernel.Geom.Rectangle pageSize = oPage.GetPageSize();
+            // Use the CropBox (visible page) not the raw MediaBox — see CreateDocumentXML for
+            // why. Keeps link-coordinate page dimensions consistent with the rendered images.
+            iText.Kernel.Geom.Rectangle pageSize = oPage.GetCropBox();
             float widthPoints = pageSize.GetWidth();
             float heightPoints = pageSize.GetHeight();
 
@@ -2062,7 +2064,14 @@ namespace JobWorker
                     }
                 }
 
-                iText.Kernel.Geom.Rectangle PageSize = oPage.GetPageSize();
+                // Use the CropBox (the visible page) rather than the raw MediaBox. Some PDFs
+                // ship an oversized MediaBox (spread artboards / bleed / "facing pages" exports)
+                // while the CropBox is the real single page. The rasterizer renders the CropBox,
+                // so recording MediaBox dimensions yields a page box larger than the actual image
+                // (e.g. a 1206-wide JPG recorded as 2412) and the page renders stretched in the
+                // Design Studio editor. GetCropBox() falls back to the MediaBox when no CropBox
+                // is present, so this is a no-op for normal PDFs.
+                iText.Kernel.Geom.Rectangle PageSize = oPage.GetCropBox();
 
                 double dPageWidth = PageSize.GetWidth();
                 double dPageHeight = PageSize.GetHeight();
